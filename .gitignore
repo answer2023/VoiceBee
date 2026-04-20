@@ -1,0 +1,30 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Signing
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# Secrets
+.env
+*.xcconfig.local

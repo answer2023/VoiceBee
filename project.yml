@@ -1,0 +1,26 @@
+name: VoiceJar
+options:
+  bundleIdPrefix: com.clearsky
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.3"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  VoiceJar:
+    type: application
+    platform: macOS
+    sources:
+      - VoiceJar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clearsky.VoiceJar
+        PRODUCT_NAME: VoiceBee
+        INFOPLIST_FILE: VoiceJar/Info.plist
+        CODE_SIGN_ENTITLEMENTS: VoiceJar/VoiceJar.entitlements
+        ENABLE_HARDENED_RUNTIME: false
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
