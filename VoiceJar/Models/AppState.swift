@@ -12,7 +12,9 @@ class AppState {
     var liveText = ""
     var statusMessage = ""
     var errorMessage: String?
-    var history: [TranscriptionRecord] = []
+    var history: [TranscriptionRecord] = [] {
+        didSet { saveHistory() }
+    }
     var isTranslating = false
     var translatedText = ""
     var inputMode: InputMode = .universal
@@ -21,6 +23,46 @@ class AppState {
     var translateSettings = PolishSettings(keyPrefix: "translate")
     let vocab = VocabStore()
     let stats = StatsStore()
+
+    private static let historyFileURL: URL = {
+        let fm = FileManager.default
+        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = support.appendingPathComponent("VoiceBee", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("history.json")
+    }()
+
+    /// 在 record 列表中替换某条的润色文本（用于「重新润色」）
+    func updateHistory(id: UUID, polishedText: String) {
+        guard let idx = history.firstIndex(where: { $0.id == id }) else { return }
+        history[idx].polishedText = polishedText
+    }
+
+    private func saveHistory() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(history)
+            try data.write(to: Self.historyFileURL, options: .atomic)
+        } catch {
+            VJLog.log("❌ 保存失败: \(error)", prefix: "History")
+        }
+    }
+
+    private func loadHistory() {
+        guard FileManager.default.fileExists(atPath: Self.historyFileURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: Self.historyFileURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let loaded = try decoder.decode([TranscriptionRecord].self, from: data)
+            // 直接赋值底层 _history 避免触发 didSet 重复保存
+            history = loaded
+        } catch {
+            VJLog.log("❌ 加载失败: \(error)", prefix: "History")
+        }
+    }
 
     /// 识别语言
     var recognitionLanguage: RecognitionLanguage {
@@ -60,6 +102,8 @@ class AppState {
         self.translateHotkey = HotkeyCombo.loadTranslateHotkey()
         let targetLang = UserDefaults.standard.string(forKey: "translate_target_lang") ?? "auto"
         self.translateTargetLang = TranslateTargetLanguage(rawValue: targetLang) ?? .auto
+
+        loadHistory()
     }
 }
 
@@ -296,10 +340,10 @@ enum PolishEngine: String, CaseIterable, Sendable {
 }
 
 /// 转写记录
-struct TranscriptionRecord: Identifiable {
-    let id = UUID()
+struct TranscriptionRecord: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
     let rawText: String
-    let polishedText: String
+    var polishedText: String
     let timestamp: Date
     let duration: TimeInterval
 }

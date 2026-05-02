@@ -48,6 +48,26 @@ struct VocabSettingsView: View {
         return "我的词典 (\(shown) / \(total))"
     }
 
+    private func exportVocab() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json, .commaSeparatedText]
+        let date = ISO8601DateFormatter().string(from: Date()).prefix(10)
+        panel.nameFieldStringValue = "voicebee-vocab-\(date).json"
+        panel.message = "选择保存位置 — 扩展名 .json 保留全部字段，.csv 适合外部编辑"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let content: String
+            if url.pathExtension.lowercased() == "csv" {
+                content = appState.vocab.exportCSV()
+            } else {
+                content = try appState.vocab.exportJSON()
+            }
+            try content.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            VJLog.log("❌ 导出失败: \(error)", prefix: "Vocab")
+        }
+    }
+
     private func filterLabel(_ f: VocabFilter) -> String {
         let count: Int
         switch f {
@@ -130,7 +150,7 @@ struct VocabSettingsView: View {
                             .controlSize(.small)
                             .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        HStack {
+                        HStack(spacing: 12) {
                             Button {
                                 showImport = true
                             } label: {
@@ -139,6 +159,17 @@ struct VocabSettingsView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(.blue)
+
+                            Button {
+                                exportVocab()
+                            } label: {
+                                Label("导出…", systemImage: "square.and.arrow.up")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.blue)
+                            .disabled(appState.vocab.entries.isEmpty)
+
                             Spacer()
                         }
                     }

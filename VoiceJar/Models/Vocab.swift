@@ -168,6 +168,36 @@ final class VocabStore {
         return false
     }
 
+    /// 导出为 JSON 字符串（与持久化文件相同格式，可直接复制为 vocab.json）
+    func exportJSON() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(entries)
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    /// 导出为 CSV（term, category, enabled, hitCount, createdAt）
+    func exportCSV() -> String {
+        var lines = ["term,category,enabled,hitCount,createdAt"]
+        let formatter = ISO8601DateFormatter()
+        for entry in entries {
+            let term = csvEscape(entry.term)
+            let category = csvEscape(entry.category)
+            let enabled = entry.enabled ? "true" : "false"
+            let date = formatter.string(from: entry.createdAt)
+            lines.append("\(term),\(category),\(enabled),\(entry.hitCount),\(date)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func csvEscape(_ s: String) -> String {
+        if s.contains(",") || s.contains("\"") || s.contains("\n") {
+            return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        }
+        return s
+    }
+
     /// 在润色后扫描结果，为每条命中的词条 +1
     func recordHits(in text: String) {
         guard !text.isEmpty else { return }

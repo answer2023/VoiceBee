@@ -3,6 +3,8 @@ import SwiftUI
 /// 历史记录面板
 struct HistoryView: View {
     @Environment(AppState.self) private var appState
+    @State private var polishingIds: Set<UUID> = []
+    private let polishService = PolishService()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,7 +45,11 @@ struct HistoryView: View {
                 ScrollView {
                     LazyVStack(spacing: 1) {
                         ForEach(appState.history) { record in
-                            HistoryRow(record: record)
+                            HistoryRow(
+                                record: record,
+                                isPolishing: polishingIds.contains(record.id),
+                                onRePolish: { rePolish(record) }
+                            )
                         }
                     }
                     .padding(.vertical, 4)
@@ -52,13 +58,43 @@ struct HistoryView: View {
         }
         .frame(width: 420, height: 480)
     }
+
+    private func rePolish(_ record: TranscriptionRecord) {
+        let snapshot = appState.polishSettings.snapshot
+        guard snapshot.engine != .none else { return }
+        polishingIds.insert(record.id)
+        let vocabTerms = appState.vocab.activeTerms
+        let mode = appState.polishMode
+        Task {
+            defer {
+                Task { @MainActor in polishingIds.remove(record.id) }
+            }
+            do {
+                let polished = try await polishService.polish(
+                    text: record.rawText,
+                    settings: snapshot,
+                    structured: mode == .structured,
+                    vocabTerms: vocabTerms
+                )
+                await MainActor.run {
+                    appState.updateHistory(id: record.id, polishedText: polished)
+                    appState.vocab.recordHits(in: polished)
+                }
+            } catch {
+                VJLog.log("❌ 重新润色失败: \(error)", prefix: "History")
+            }
+        }
+    }
 }
 
 /// 单条历史记录行
 struct HistoryRow: View {
     let record: TranscriptionRecord
+    let isPolishing: Bool
+    let onRePolish: () -> Void
     @State private var isHovering = false
     @State private var showCopied = false
+    @State private var showCopiedRaw = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -75,9 +111,18 @@ struct HistoryRow: View {
 
                 Spacer()
 
-                if isHovering {
+                if isPolishing {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 14, height: 14)
+                        Text("润色中…")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                } else if isHovering {
                     HStack(spacing: 8) {
-                        // 复制按钮
+                        // 复制润色版
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(record.polishedText, forType: .string)
@@ -91,9 +136,38 @@ struct HistoryRow: View {
                                 .foregroundStyle(showCopied ? .green : .secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("复制")
+                        .help("复制润色后")
 
-                        // 重新上屏按钮
+                        // 复制原文（仅当原文与润色文不同）
+                        if record.rawText != record.polishedText {
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(record.rawText, forType: .string)
+                                withAnimation { showCopiedRaw = true }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation { showCopiedRaw = false }
+                                }
+                            } label: {
+                                Image(systemName: showCopiedRaw ? "checkmark" : "doc.on.doc.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(showCopiedRaw ? .green : .secondary.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .help("复制原文")
+                        }
+
+                        // 重新润色
+                        Button {
+                            onRePolish()
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("重新润色（用当前 AI 引擎和模式）")
+
+                        // 重新上屏
                         Button {
                             TextInjector.inject(record.polishedText)
                         } label: {
