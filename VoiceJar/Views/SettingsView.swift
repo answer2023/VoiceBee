@@ -248,24 +248,19 @@ struct TranslateSettingsView: View {
                     title: "口述翻译目标语言",
                     description: "选某语言后，录音中按一下触发键即可把转写翻译成此语言再插入光标。选「不启用」则触发键无任何效果。"
                 ) {
-                    Picker("", selection: Binding(
-                        get: { appState.translation.targetLanguage ?? .en },
-                        set: { newValue in
-                            // 用一个 sentinel option 代表 nil
-                            appState.translation.targetLanguage = newValue
-                        }
+                    // 显式标注为 Optional<WorkingLanguage> 让 binding 与 tag 类型一致
+                    Picker("", selection: Binding<WorkingLanguage?>(
+                        get: { appState.translation.targetLanguage },
+                        set: { appState.translation.targetLanguage = $0 }
                     )) {
-                        Text("不启用").tag(nil as WorkingLanguage?)
+                        Text("不启用").tag(WorkingLanguage?.none)
                         Divider()
                         ForEach(WorkingLanguage.allCases) { lang in
-                            Text(lang.displayName).tag(Optional(lang))
+                            Text(lang.displayName).tag(WorkingLanguage?.some(lang))
                         }
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
-                    .onChange(of: appState.translation.targetLanguage) { _, _ in
-                        // VoiceEngine 在每次录音开始时自动 refresh，无需额外通知
-                    }
                 }
 
                 // 触发键（带冲突检测）
