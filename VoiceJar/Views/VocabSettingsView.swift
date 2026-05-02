@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 词典设置 — 用户专名 / 术语管理 + 自学习候选词
 struct VocabSettingsView: View {
@@ -8,6 +10,55 @@ struct VocabSettingsView: View {
     @State private var editingId: UUID?
     @State private var editingTerm: String = ""
     @State private var editingCategory: String = ""
+    @State private var showImport = false
+    @State private var selectedIds: Set<UUID> = []
+    @State private var filter: VocabFilter = .all
+    @State private var showDeleteConfirm = false
+
+    enum VocabFilter: String, CaseIterable {
+        case all = "全部"
+        case enabled = "启用"
+        case disabled = "禁用"
+        case suspect = "可疑"
+        case hit = "命中过"
+    }
+
+    private var displayedEntries: [VocabEntry] {
+        let all = appState.vocab.entries
+        switch filter {
+        case .all: return all
+        case .enabled: return all.filter { $0.enabled }
+        case .disabled: return all.filter { !$0.enabled }
+        case .suspect: return all.filter { VocabStore.isSuspect($0.term) }
+        case .hit: return all.filter { $0.hitCount > 0 }
+        }
+    }
+
+    private var displayedIds: Set<UUID> { Set(displayedEntries.map(\.id)) }
+    private var allDisplayedSelected: Bool {
+        !displayedEntries.isEmpty && displayedEntries.allSatisfy { selectedIds.contains($0.id) }
+    }
+
+    private var vocabListTitle: String {
+        let total = appState.vocab.entries.count
+        let shown = displayedEntries.count
+        if filter == .all || total == shown {
+            return "我的词典 (\(total))"
+        }
+        return "我的词典 (\(shown) / \(total))"
+    }
+
+    private func filterLabel(_ f: VocabFilter) -> String {
+        let count: Int
+        switch f {
+        case .all: count = appState.vocab.entries.count
+        case .enabled: count = appState.vocab.entries.filter { $0.enabled }.count
+        case .disabled: count = appState.vocab.entries.filter { !$0.enabled }.count
+        case .suspect: count = appState.vocab.entries.filter { VocabStore.isSuspect($0.term) }.count
+        case .hit: count = appState.vocab.entries.filter { $0.hitCount > 0 }.count
+        }
+        return "\(f.rawValue) \(count)"
+    }
 
     private var candidates: [String] {
         VocabStore.mineCandidates(
@@ -56,33 +107,46 @@ struct VocabSettingsView: View {
 
                 // 新增词条
                 SettingsSection(title: "新增词条", description: "") {
-                    HStack(spacing: 8) {
-                        TextField("Claude / ChatGPT / 张三 …", text: $newTerm)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
-                        TextField("分类（可选）", text: $newCategory)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
-                            .frame(width: 100)
-                        Button("添加") {
-                            let trimmed = newTerm.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !trimmed.isEmpty else { return }
-                            appState.vocab.add(VocabEntry(
-                                term: trimmed,
-                                category: newCategory.trimmingCharacters(in: .whitespacesAndNewlines)
-                            ))
-                            newTerm = ""
-                            newCategory = ""
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            TextField("Claude / ChatGPT / 张三 …", text: $newTerm)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12))
+                            TextField("分类（可选）", text: $newCategory)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12))
+                                .frame(width: 100)
+                            Button("添加") {
+                                let trimmed = newTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !trimmed.isEmpty else { return }
+                                appState.vocab.add(VocabEntry(
+                                    term: trimmed,
+                                    category: newCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                                ))
+                                newTerm = ""
+                                newCategory = ""
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(newTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        HStack {
+                            Button {
+                                showImport = true
+                            } label: {
+                                Label("批量导入…", systemImage: "square.and.arrow.down")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.blue)
+                            Spacer()
+                        }
                     }
                 }
 
                 // 词条列表
                 SettingsSection(
-                    title: "我的词典 (\(appState.vocab.entries.count))",
+                    title: vocabListTitle,
                     description: ""
                 ) {
                     if appState.vocab.entries.isEmpty {
@@ -92,42 +156,321 @@ struct VocabSettingsView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 12)
                     } else {
-                        VStack(spacing: 6) {
-                            ForEach(appState.vocab.entries) { entry in
-                                VocabRow(
-                                    entry: entry,
-                                    isEditing: editingId == entry.id,
-                                    editingTerm: $editingTerm,
-                                    editingCategory: $editingCategory,
-                                    onStartEdit: {
-                                        editingId = entry.id
-                                        editingTerm = entry.term
-                                        editingCategory = entry.category
-                                    },
-                                    onCommit: {
-                                        var updated = entry
-                                        updated.term = editingTerm.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        updated.category = editingCategory.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        if !updated.term.isEmpty {
-                                            appState.vocab.update(updated)
-                                        }
-                                        editingId = nil
-                                    },
-                                    onCancel: { editingId = nil },
-                                    onToggle: { appState.vocab.toggle(entry.id) },
-                                    onDelete: {
-                                        if editingId == entry.id { editingId = nil }
-                                        appState.vocab.remove(entry.id)
+                        VStack(spacing: 8) {
+                            // 过滤器
+                            HStack(spacing: 6) {
+                                ForEach(VocabFilter.allCases, id: \.self) { f in
+                                    Button {
+                                        filter = f
+                                    } label: {
+                                        Text(filterLabel(f))
+                                            .font(.system(size: 11, weight: filter == f ? .medium : .regular))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(
+                                                filter == f
+                                                    ? Color.blue.opacity(0.15)
+                                                    : Color.secondary.opacity(0.08),
+                                                in: Capsule()
+                                            )
+                                            .foregroundStyle(filter == f ? .blue : .secondary)
                                     }
-                                )
+                                    .buttonStyle(.plain)
+                                }
+                                Spacer()
+                            }
+
+                            // 批量操作工具栏
+                            if !selectedIds.isEmpty {
+                                HStack(spacing: 8) {
+                                    Text("已选 \(selectedIds.count) 个")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.blue)
+                                    Spacer()
+                                    Button("启用") {
+                                        appState.vocab.setEnabledBatch(selectedIds, enabled: true)
+                                    }
+                                    .controlSize(.mini)
+                                    Button("禁用") {
+                                        appState.vocab.setEnabledBatch(selectedIds, enabled: false)
+                                    }
+                                    .controlSize(.mini)
+                                    Button("删除") {
+                                        showDeleteConfirm = true
+                                    }
+                                    .controlSize(.mini)
+                                    .tint(.red)
+                                    Button("清除选中") {
+                                        selectedIds.removeAll()
+                                    }
+                                    .controlSize(.mini)
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 11))
+                                }
+                                .padding(8)
+                                .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                            }
+
+                            // 全选 / 全不选
+                            HStack {
+                                Button {
+                                    if allDisplayedSelected {
+                                        selectedIds.subtract(displayedIds)
+                                    } else {
+                                        selectedIds.formUnion(displayedIds)
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: allDisplayedSelected ? "checkmark.square.fill" : "square")
+                                            .font(.system(size: 11))
+                                        Text(allDisplayedSelected ? "取消全选" : "全选当前列表")
+                                            .font(.system(size: 11))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+
+                            // 列表
+                            if displayedEntries.isEmpty {
+                                Text("（当前过滤无词条）")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.vertical, 12)
+                            } else {
+                                VStack(spacing: 4) {
+                                    ForEach(displayedEntries) { entry in
+                                        VocabRow(
+                                            entry: entry,
+                                            isEditing: editingId == entry.id,
+                                            isSelected: selectedIds.contains(entry.id),
+                                            editingTerm: $editingTerm,
+                                            editingCategory: $editingCategory,
+                                            onStartEdit: {
+                                                editingId = entry.id
+                                                editingTerm = entry.term
+                                                editingCategory = entry.category
+                                            },
+                                            onCommit: {
+                                                var updated = entry
+                                                updated.term = editingTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                updated.category = editingCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                if !updated.term.isEmpty {
+                                                    appState.vocab.update(updated)
+                                                }
+                                                editingId = nil
+                                            },
+                                            onCancel: { editingId = nil },
+                                            onToggle: { appState.vocab.toggle(entry.id) },
+                                            onDelete: {
+                                                if editingId == entry.id { editingId = nil }
+                                                selectedIds.remove(entry.id)
+                                                appState.vocab.remove(entry.id)
+                                            },
+                                            onToggleSelect: {
+                                                if selectedIds.contains(entry.id) {
+                                                    selectedIds.remove(entry.id)
+                                                } else {
+                                                    selectedIds.insert(entry.id)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
+                }
+                .confirmationDialog(
+                    "删除选中的 \(selectedIds.count) 个词条？",
+                    isPresented: $showDeleteConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("删除", role: .destructive) {
+                        appState.vocab.removeBatch(selectedIds)
+                        selectedIds.removeAll()
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("此操作不可撤销。")
                 }
 
                 Spacer()
             }
             .padding(24)
+        }
+        .sheet(isPresented: $showImport) {
+            VocabImportSheet(vocab: appState.vocab, isPresented: $showImport)
+        }
+    }
+}
+
+/// 批量导入 sheet
+private struct VocabImportSheet: View {
+    let vocab: VocabStore
+    @Binding var isPresented: Bool
+    @State private var inputText: String = ""
+    @State private var resultMessage: String?
+    @State private var includeSuspect: Bool = false
+    @State private var showSuspectList: Bool = false
+
+    private var parsedPreview: [VocabEntry] {
+        VocabStore.parseImport(inputText)
+    }
+
+    private var cleanEntries: [VocabEntry] {
+        parsedPreview.filter { !VocabStore.isSuspect($0.term) }
+    }
+
+    private var suspectEntries: [VocabEntry] {
+        parsedPreview.filter { VocabStore.isSuspect($0.term) }
+    }
+
+    private var entriesToImport: [VocabEntry] {
+        includeSuspect ? parsedPreview : cleanEntries
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("批量导入词典")
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Button("关闭") { isPresented = false }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("支持 Rime 词典（.yaml）/ CSV / 纯文本。一行一个词条。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text("• 用 `,` / `|` 分隔，第二段作分类；用 Tab 分隔（Rime 格式）只取第一列\n• `#` 开头作注释；`---` 之间的 YAML frontmatter 自动跳过\n• URL / 邮箱 / 含空格的句子默认过滤（不适合作语音热词）")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+
+            TextEditor(text: $inputText)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 220)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(.secondary.opacity(0.2), lineWidth: 1)
+                )
+
+            HStack {
+                Button {
+                    pickFile()
+                } label: {
+                    Label("从文件…", systemImage: "doc.badge.plus")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    if let pasted = NSPasteboard.general.string(forType: .string) {
+                        inputText = inputText.isEmpty ? pasted : inputText + "\n" + pasted
+                    }
+                } label: {
+                    Label("粘贴剪贴板", systemImage: "doc.on.clipboard")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+
+                Button("导入 \(entriesToImport.count) 个") {
+                    let result = vocab.addBatch(entriesToImport)
+                    resultMessage = "✅ 新增 \(result.added) 个，跳过 \(result.skipped) 个重复"
+                    if result.added > 0 {
+                        inputText = ""
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(entriesToImport.isEmpty)
+            }
+
+            // 解析摘要 + 可疑条目处理
+            if !parsedPreview.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("解析到 \(parsedPreview.count) 个，可用 \(cleanEntries.count) 个")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        if !suspectEntries.isEmpty {
+                            Text("· \(suspectEntries.count) 个可疑")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.orange)
+                            Button(showSuspectList ? "收起" : "查看") {
+                                showSuspectList.toggle()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.blue)
+                        }
+                        Spacer()
+                        if !suspectEntries.isEmpty {
+                            Toggle("一并导入可疑条目", isOn: $includeSuspect)
+                                .toggleStyle(.checkbox)
+                                .controlSize(.mini)
+                                .font(.system(size: 11))
+                        }
+                    }
+                    if showSuspectList && !suspectEntries.isEmpty {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(suspectEntries.prefix(50)), id: \.term) { entry in
+                                    Text(entry.term)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                if suspectEntries.count > 50 {
+                                    Text("…还有 \(suspectEntries.count - 50) 条")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 80)
+                        .padding(8)
+                        .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+            }
+
+            if let message = resultMessage {
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.green)
+            }
+        }
+        .padding(20)
+        .frame(width: 520, height: 480)
+    }
+
+    private func pickFile() {
+        let panel = NSOpenPanel()
+        var types: [UTType] = [.text, .plainText, .commaSeparatedText]
+        if let yaml = UTType(filenameExtension: "yaml") { types.append(yaml) }
+        if let yml = UTType(filenameExtension: "yml") { types.append(yml) }
+        panel.allowedContentTypes = types
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            inputText = inputText.isEmpty ? content : inputText + "\n" + content
+        } catch {
+            resultMessage = "❌ 读取失败：\(error.localizedDescription)"
         }
     }
 }
@@ -136,6 +479,7 @@ struct VocabSettingsView: View {
 private struct VocabRow: View {
     let entry: VocabEntry
     let isEditing: Bool
+    let isSelected: Bool
     @Binding var editingTerm: String
     @Binding var editingCategory: String
     let onStartEdit: () -> Void
@@ -143,11 +487,19 @@ private struct VocabRow: View {
     let onCancel: () -> Void
     let onToggle: () -> Void
     let onDelete: () -> Void
+    let onToggleSelect: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 8) {
+            Button(action: onToggleSelect) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isSelected ? .blue : .secondary.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+
             Toggle("", isOn: Binding(
                 get: { entry.enabled },
                 set: { _ in onToggle() }
@@ -176,6 +528,15 @@ private struct VocabRow: View {
                 Text(entry.term)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(entry.enabled ? .primary : .tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if VocabStore.isSuspect(entry.term) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange.opacity(0.7))
+                        .help("此条目可能不适合作为语音热词（含 URL / 邮箱 / 空格 / 标点）")
+                }
 
                 if !entry.category.isEmpty {
                     Text(entry.category)

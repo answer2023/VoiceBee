@@ -43,6 +43,79 @@ final class VocabStore {
         save()
     }
 
+    /// 批量添加 — 单次落盘；返回 (实际新增数, 跳过重复数)
+    @discardableResult
+    func addBatch(_ newEntries: [VocabEntry]) -> (added: Int, skipped: Int) {
+        var existing = existingTermSet
+        var added = 0
+        var skipped = 0
+        for entry in newEntries {
+            let key = entry.term.trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty else { skipped += 1; continue }
+            let lower = key.lowercased()
+            if existing.contains(lower) { skipped += 1; continue }
+            existing.insert(lower)
+            var normalized = entry
+            normalized.term = key
+            entries.append(normalized)
+            added += 1
+        }
+        if added > 0 { save() }
+        return (added, skipped)
+    }
+
+    /// 文本解析为词条列表
+    /// - 兼容 Rime 词典：自动跳过 `---` 之间的 YAML frontmatter；Tab 分隔行只取第一列（丢弃编码/权重）
+    /// - 兼容用户列表：`,` / `|` 分隔时第一段为 term、第二段为 category
+    /// - `#` 开头的行视为注释跳过
+    static func parseImport(_ text: String) -> [VocabEntry] {
+        var result: [VocabEntry] = []
+        var inFrontmatter = false
+        var frontmatterClosed = false
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+
+            // YAML frontmatter 边界：`---` 开始（也可关闭），`...` 关闭（YAML doc end marker，Rime 用）
+            if line == "---" || line == "..." {
+                if !frontmatterClosed {
+                    if inFrontmatter {
+                        inFrontmatter = false
+                        frontmatterClosed = true
+                    } else if line == "---" {
+                        inFrontmatter = true
+                    }
+                }
+                continue
+            }
+            if inFrontmatter { continue }
+
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+
+            // Tab 分隔（Rime 词典格式：term\tcode\tweight）→ 只取第一列
+            if line.contains("\t") {
+                let term = String(line.split(separator: "\t").first ?? "")
+                    .trimmingCharacters(in: .whitespaces)
+                guard !term.isEmpty else { continue }
+                result.append(VocabEntry(term: term, category: ""))
+                continue
+            }
+
+            // 逗号 / 管道分隔（用户友好格式：term, category）
+            let separators: [Character] = [",", "|"]
+            var term = line
+            var category = ""
+            if let sep = separators.first(where: { line.contains($0) }),
+               let idx = line.firstIndex(of: sep) {
+                term = String(line[..<idx]).trimmingCharacters(in: .whitespaces)
+                category = String(line[line.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+            }
+            guard !term.isEmpty else { continue }
+            result.append(VocabEntry(term: term, category: category))
+        }
+        return result
+    }
+
     func update(_ entry: VocabEntry) {
         guard let idx = entries.firstIndex(where: { $0.id == entry.id }) else { return }
         entries[idx] = entry
@@ -54,10 +127,45 @@ final class VocabStore {
         save()
     }
 
+    func removeBatch(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        entries.removeAll { ids.contains($0.id) }
+        save()
+    }
+
     func toggle(_ id: UUID) {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[idx].enabled.toggle()
         save()
+    }
+
+    func setEnabledBatch(_ ids: Set<UUID>, enabled: Bool) {
+        guard !ids.isEmpty else { return }
+        var changed = false
+        for idx in entries.indices where ids.contains(entries[idx].id) {
+            if entries[idx].enabled != enabled {
+                entries[idx].enabled = enabled
+                changed = true
+            }
+        }
+        if changed { save() }
+    }
+
+    /// 判断条目是否「可疑」— 不太适合作为 ASR 热词
+    /// URL / 邮箱 / 含空格的句子 / 纯标点 / 过长 都算可疑
+    static func isSuspect(_ term: String) -> Bool {
+        let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return true }
+        if t.contains("://") || t.contains("http") { return true }
+        if t.contains("@") && t.contains(".") { return true }   // email-like
+        if t.contains(" ") || t.contains("\t") { return true }  // sentence/phrase
+        if t.count > 30 { return true }
+        // 不含字母 / 数字 / CJK = 纯标点或表情
+        let usefulChars = CharacterSet.letters
+            .union(.decimalDigits)
+            .union(CharacterSet(charactersIn: "\u{4E00}"..."\u{9FFF}"))
+        if t.unicodeScalars.first(where: { usefulChars.contains($0) }) == nil { return true }
+        return false
     }
 
     /// 在润色后扫描结果，为每条命中的词条 +1

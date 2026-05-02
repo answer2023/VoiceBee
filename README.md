@@ -22,6 +22,14 @@
 
 ---
 
+## Demo
+
+<p align="center">
+  <img src="docs/demo.gif" alt="VoiceBee demo — hold key, speak, release" width="640" />
+</p>
+
+> 📹 To regenerate: `Cmd+Shift+5` → "Record Selected Portion" → record 20–30s of "hold key → speak Chinese with ChatGPT-style prompt → release → text appears in the editor". Save as `docs/demo.gif` (use [Gifski](https://gif.ski/) or `ffmpeg -i input.mov -vf "fps=15,scale=640:-1" -c:v gif docs/demo.gif`).
+
 ## Why VoiceBee
 
 VoiceBee is a native macOS voice input app for any text field — ChatGPT, Claude, Cursor, Notion, your editor, your terminal. Hold a key, speak, release. The transcript appears at the cursor.

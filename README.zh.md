@@ -22,6 +22,14 @@
 
 ---
 
+## 演示
+
+<p align="center">
+  <img src="docs/demo.gif" alt="VoiceBee 演示 — 按住、说话、松开" width="640" />
+</p>
+
+> 📹 录制方法：`Cmd+Shift+5` → "录制选定区域" → 录 20–30 秒"按住键→说一段中文 prompt→松开→文字出现在编辑器"。存为 `docs/demo.gif`（用 [Gifski](https://gif.ski/) 或 `ffmpeg -i input.mov -vf "fps=15,scale=640:-1" -c:v gif docs/demo.gif`）。
+
 ## 为什么选 VoiceBee
 
 VoiceBee 是原生 macOS 语音输入工具：在任意输入框（ChatGPT、Claude、Cursor、Notion、编辑器、终端...）按住快捷键说话，松开即上屏。
