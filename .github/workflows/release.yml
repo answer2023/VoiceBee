@@ -1,0 +1,209 @@
+name: Release
+
+# 触发：推 v* 标签时（如 v1.2.0），或在 Actions 页手动 dispatch
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（如 1.2.0），手动触发时使用'
+        required: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 把所有可能被外部输入污染的字段先存到 env，避免 ${{ ... }} 直接进 run: 引发命令注入
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_REF: ${{ github.ref }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GH_REF#refs/tags/v}"
+          fi
+          # 防御性校验：版本号只允许 [0-9.]+([-+][a-zA-Z0-9.]+)?
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][a-zA-Z0-9.]+)?$ ]]; then
+            echo "❌ 不合法的版本号：$VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.3'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen
+
+      # ─────────────────────────────────────────
+      # 代码签名（Apple Developer ID Application 证书）
+      # 需要的 GitHub Secrets：
+      #   APPLE_CERT_P12_BASE64    — Developer ID Application 证书的 .p12 文件 base64
+      #   APPLE_CERT_PASSWORD      — .p12 密码
+      # ─────────────────────────────────────────
+      - name: Import code signing certificate
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          if [ -z "${APPLE_CERT_P12_BASE64:-}" ]; then
+            echo "⚠️ APPLE_CERT_P12_BASE64 未配置 — 跳过签名/公证（仅做 ad-hoc 构建）"
+            echo "SKIP_SIGN=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychain -d user | tr -d '"' | xargs)
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Build Release
+        run: |
+          xcodebuild \
+            -project VoiceJar.xcodeproj \
+            -scheme VoiceJar \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            ${SKIP_SIGN:+CODE_SIGN_IDENTITY="-"} \
+            clean build
+
+      - name: Locate built .app
+        id: locate
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/VoiceBee.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ 找不到 VoiceBee.app at $APP_PATH"
+            ls -la build/DerivedData/Build/Products/Release/ || true
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Package .dmg
+        id: dmg
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          APP_PATH: ${{ steps.locate.outputs.app_path }}
+        run: |
+          DMG="build/VoiceBee-${VERSION}.dmg"
+          mkdir -p build
+          hdiutil create -volname "VoiceBee ${VERSION}" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDZO "$DMG"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -f%z "$DMG")" >> "$GITHUB_OUTPUT"
+
+      # ─────────────────────────────────────────
+      # 公证 — 需要的 Secrets：
+      #   APPLE_ID, APPLE_APP_PASSWORD, APPLE_TEAM_ID
+      # ─────────────────────────────────────────
+      - name: Notarize
+        if: env.SKIP_SIGN != '1'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      # ─────────────────────────────────────────
+      # Sparkle 签名 — 需要 SPARKLE_ED_PRIVATE_KEY secret
+      # ─────────────────────────────────────────
+      - name: Sparkle sign update
+        id: sparkle
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "❌ SPARKLE_ED_PRIVATE_KEY secret 未配置 — Sparkle 用户无法验证签名，更新会被拒绝"
+            exit 1
+          fi
+          SIGN_UPDATE=$(find build/DerivedData -name "sign_update" -type f -path "*sparkle*Sparkle/bin*" | head -1)
+          if [ -z "$SIGN_UPDATE" ]; then
+            echo "❌ 找不到 sign_update 工具"
+            exit 1
+          fi
+          PRIV_KEY_FILE="$RUNNER_TEMP/sparkle_priv.key"
+          echo "$SPARKLE_ED_PRIVATE_KEY" > "$PRIV_KEY_FILE"
+          SIGNATURE=$("$SIGN_UPDATE" "$DMG" --ed-key-file "$PRIV_KEY_FILE")
+          rm "$PRIV_KEY_FILE"
+          # SIGNATURE 形如: sparkle:edSignature="..." length="..."
+          echo "signature=$SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "$SIGNATURE"
+
+      - name: Generate appcast.xml
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          DMG_SIZE: ${{ steps.dmg.outputs.size }}
+          SIGNATURE: ${{ steps.sparkle.outputs.signature }}
+        run: |
+          PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S +0000")
+          BUILD_NUM=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" VoiceJar/Info.plist)
+          # 生成 appcast — 注意所有变量都通过 $ENV 引用，不要把 ${{ }} 直接放进 heredoc
+          cat > build/appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+              <channel>
+                  <title>VoiceBee</title>
+                  <link>https://github.com/answer2023/VoiceBee</link>
+                  <description>Native macOS voice input — local-first, open source.</description>
+                  <language>zh</language>
+                  <item>
+                      <title>v${VERSION}</title>
+                      <description><![CDATA[<a href="https://github.com/answer2023/VoiceBee/releases/tag/${TAG}">Release notes</a>]]></description>
+                      <pubDate>${PUB_DATE}</pubDate>
+                      <sparkle:version>${BUILD_NUM}</sparkle:version>
+                      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                      <enclosure
+                          url="https://github.com/answer2023/VoiceBee/releases/download/${TAG}/VoiceBee-${VERSION}.dmg"
+                          ${SIGNATURE}
+                          length="${DMG_SIZE}"
+                          type="application/octet-stream" />
+                  </item>
+              </channel>
+          </rss>
+          EOF
+          cat build/appcast.xml
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+        run: |
+          gh release create "$TAG" \
+            "$DMG" \
+            "build/appcast.xml" \
+            --title "VoiceBee $TAG" \
+            --generate-notes

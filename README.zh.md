@@ -123,41 +123,23 @@ UpdaterManager      Sparkle 2 封装
 
 ## 维护者发版清单
 
-每次打包 `.dmg` 上传 Releases 前的检查清单：
+发版由 GitHub Actions 自动化，日常只需两步：
 
-### 一次性配置（仅第一次发版）
+```bash
+# 1. bump Info.plist（CFBundleShortVersionString + CFBundleVersion）
+# 2. 推 tag
+git tag v1.x.x
+git push --tags
+```
 
-- [ ] **生成 Sparkle ed25519 密钥对**
-  ```bash
-  find ~/Library/Developer/Xcode/DerivedData -name "generate_keys" -type f -path "*Sparkle*" | head -1
-  # 跑上面打印出的路径
-  ```
-  私钥自动存入 macOS Keychain（service 为 `https://sparkle-project.org`），公钥打印到屏幕。
-- [ ] **把公钥贴进 `VoiceJar/Info.plist`** 作为 `SUPublicEDKey` 的值。
-- [ ] **导出私钥给 CI 用**：
-  ```bash
-  /path/to/generate_keys -x /tmp/sparkle_priv.key
-  cat /tmp/sparkle_priv.key   # 复制
-  rm /tmp/sparkle_priv.key    # 立刻删除
-  ```
-  到 GitHub repo → Settings → Secrets → Actions 新增 `SPARKLE_ED_PRIVATE_KEY`。**永远不要 commit、截图、转发这个私钥** —— 一旦泄漏，攻击者就能签发被所有 VoiceBee 用户静默自动安装的恶意更新。
-- [ ] **更新 `SUFeedURL`** 为你真实的 appcast URL（默认 `releases/latest/download/appcast.xml`）。
-- [ ] **Apple 开发者证书 + 公证（notarization）** — 与 Sparkle 签名互不相同，是让 macOS Gatekeeper 接受 `.app` 的必备条件。
+CI 自动完成：构建 → 签名 → 公证 → Sparkle 签名 → 生成 appcast.xml → 发 GitHub Release。
 
-### 每次发版
+**首次配置**（一次性配置以下 GitHub Secrets）：见 [docs/RELEASE.md](docs/RELEASE.md)。
+- `SPARKLE_ED_PRIVATE_KEY` — Sparkle 更新签名
+- `APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD` — Developer ID Application 证书
+- `APPLE_ID` + `APPLE_APP_PASSWORD` + `APPLE_TEAM_ID` — 公证
 
-- [ ] 在 `VoiceJar/Info.plist` 里 bump `CFBundleShortVersionString` 和 `CFBundleVersion`。
-- [ ] `xcodegen && xcodebuild -project VoiceJar.xcodeproj -scheme VoiceJar -configuration Release build`。
-- [ ] 打包 `VoiceBee-<version>.dmg`，跑 `xcrun notarytool submit` 公证。
-- [ ] 用 Sparkle 给 DMG 签名：
-  ```bash
-  ./sign_update VoiceBee-<version>.dmg
-  # 输出：sparkle:edSignature="..." length="..."
-  ```
-- [ ] 更新 `appcast.xml`，把新的 `<enclosure>`（含 `sparkle:edSignature` 和 `sparkle:version`）写进去。
-- [ ] 打 tag：`git tag v<version> && git push --tags`。
-- [ ] 把 `.dmg` + `appcast.xml` 上传到 GitHub Release。
-- [ ] 冒烟测试：装旧版 → 点"检查更新" → 走完整自动更新链路验证通过。
+本机手工发版：`./scripts/release.sh 1.x.x`。
 
 ## License
 

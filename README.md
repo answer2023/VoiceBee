@@ -123,41 +123,23 @@ hotkey up → recognizer.finishStreaming → PolishService.polishStream(vocabTer
 
 ## Maintainer release checklist
 
-Before publishing a new `.dmg` to Releases:
+Releases are automated via GitHub Actions. To cut a new release:
 
-### One-time setup (first release only)
+```bash
+# 1. Bump Info.plist (CFBundleShortVersionString + CFBundleVersion)
+# 2. Push tag
+git tag v1.x.x
+git push --tags
+```
 
-- [ ] **Generate Sparkle ed25519 keypair**
-  ```bash
-  find ~/Library/Developer/Xcode/DerivedData -name "generate_keys" -type f -path "*Sparkle*" | head -1
-  # run the path printed above
-  ```
-  The private key auto-saves to your macOS Keychain (service `https://sparkle-project.org`). The public key is printed to stdout.
-- [ ] **Paste the public key** into `VoiceJar/Info.plist` as the value of `SUPublicEDKey`.
-- [ ] **Export the private key** for CI:
-  ```bash
-  /path/to/generate_keys -x /tmp/sparkle_priv.key
-  cat /tmp/sparkle_priv.key   # copy
-  rm /tmp/sparkle_priv.key    # delete immediately
-  ```
-  Add it to GitHub repo → Settings → Secrets → Actions as `SPARKLE_ED_PRIVATE_KEY`. **Never commit, screenshot, or share this key** — leak = attacker can sign malicious updates that all VoiceBee users auto-install.
-- [ ] **Update `SUFeedURL`** in Info.plist to your real appcast URL (default: `releases/latest/download/appcast.xml`).
-- [ ] **Apple Developer ID + notarization** — separate from Sparkle signing; required so macOS Gatekeeper accepts the `.app`.
+CI handles: build → sign → notarize → Sparkle-sign → generate appcast.xml → publish GitHub Release.
 
-### Every release
+**First-time setup** (configure these GitHub Secrets once): see [docs/RELEASE.md](docs/RELEASE.md).
+- `SPARKLE_ED_PRIVATE_KEY` — Sparkle update signing
+- `APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD` — Developer ID Application certificate
+- `APPLE_ID` + `APPLE_APP_PASSWORD` + `APPLE_TEAM_ID` — Notarization
 
-- [ ] Bump `CFBundleShortVersionString` and `CFBundleVersion` in `VoiceJar/Info.plist`.
-- [ ] `xcodegen && xcodebuild -project VoiceJar.xcodeproj -scheme VoiceJar -configuration Release build`.
-- [ ] Create `VoiceBee-<version>.dmg` and notarize via `xcrun notarytool submit`.
-- [ ] Sign the DMG for Sparkle:
-  ```bash
-  ./sign_update VoiceBee-<version>.dmg
-  # outputs: sparkle:edSignature="..." length="..."
-  ```
-- [ ] Update `appcast.xml` with the new `<enclosure>` including `sparkle:edSignature` and `sparkle:version`.
-- [ ] Tag the release: `git tag v<version> && git push --tags`.
-- [ ] Upload `.dmg` + `appcast.xml` to the GitHub Release.
-- [ ] Smoke test: install the previous version, launch, click "Check for Updates", verify auto-update works end-to-end.
+For local manual release: `./scripts/release.sh 1.x.x`.
 
 ## License
 
