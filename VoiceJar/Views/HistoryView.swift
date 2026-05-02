@@ -59,12 +59,12 @@ struct HistoryView: View {
         .frame(width: 420, height: 480)
     }
 
-    private func rePolish(_ record: TranscriptionRecord) {
+    private func rePolish(_ record: TranscriptionRecord, style: OutputStyle? = nil) {
         let snapshot = appState.polishSettings.snapshot
         guard snapshot.engine != .none else { return }
         polishingIds.insert(record.id)
         let vocabTerms = appState.vocab.activeTerms
-        let mode = appState.polishMode
+        let activeStyle = style ?? appState.outputStyle.defaultStyle
         Task {
             defer {
                 Task { @MainActor in polishingIds.remove(record.id) }
@@ -73,7 +73,7 @@ struct HistoryView: View {
                 let polished = try await polishService.polish(
                     text: record.rawText,
                     settings: snapshot,
-                    structured: mode == .structured,
+                    style: activeStyle,
                     vocabTerms: vocabTerms
                 )
                 await MainActor.run {

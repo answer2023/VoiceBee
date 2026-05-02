@@ -18,11 +18,11 @@ class AppState {
     var isTranslating = false
     var translatedText = ""
     var inputMode: InputMode = .universal
-    var polishMode: PolishMode = .instant
     var polishSettings = PolishSettings(keyPrefix: "polish")
     var translateSettings = PolishSettings(keyPrefix: "translate")
     let vocab = VocabStore()
     let stats = StatsStore()
+    let outputStyle = OutputStyleSettings()
 
     private static let historyFileURL: URL = {
         let fm = FileManager.default
@@ -290,23 +290,6 @@ struct HotkeyCombo: Equatable {
 enum InputMode: String, CaseIterable {
     case universal = "通用输入"
     case journal = "写入日志"
-}
-
-/// 润色模式
-enum PolishMode: String, CaseIterable {
-    case instant = "即时上屏"
-    case structured = "润色上屏"
-
-    var icon: String {
-        switch self {
-        case .instant: return "bolt.fill"
-        case .structured: return "sparkles"
-        }
-    }
-
-    mutating func toggle() {
-        self = (self == .instant) ? .structured : .instant
-    }
 }
 
 /// 润色引擎

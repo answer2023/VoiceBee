@@ -3,35 +3,9 @@ import Foundation
 /// AI 润色服务 — 对语音识别结果做纠错、断句、标点优化
 actor PolishService {
 
-    /// 即时模式：轻度润色
-    static let instantPrompt = """
-    你是一个中文语音转文字的后处理助手。用户会给你一段语音识别的原始文本，你需要：
-    1. 修正同音字错误（如"以经"→"已经"）
-    2. 补充或修正标点符号
-    3. 修正中英文混输时的拼写（如识别器可能把中文词听成英文）
-    4. 数字和日期用中文习惯表达（如"2024年3月"而非"二零二四年三月"，看上下文选合适的）
-    5. 去除口头禅和语气词（嗯、啊、那个、就是说）
-    6. 保持原意，不要改写、扩写或总结
-
-    直接输出修正后的文本，不要加任何解释、前缀或引号。
-    """
-
-    /// 润色模式：深度整理
-    static let structuredPrompt = """
-    你是一个中文语音整理助手。用户会口述一段内容，可能逻辑跳跃、有重复、有口头禅。你需要：
-    1. 修正同音字和标点符号
-    2. 去除口头禅、重复内容、无意义的过渡词
-    3. 理清逻辑顺序，让表达更流畅
-    4. 如果内容有多个要点，用清晰的分段或分点表达
-    5. 保持原意和原有的语气风格，不要过度改写或添加原文没有的内容
-    6. 如果原文很短或已经很清晰，只做轻度修正即可
-
-    直接输出整理后的文本，不要加任何解释、前缀或引号。
-    """
-
-    /// 在基础 prompt 末尾追加词典提示，让模型按上下文判断是否替换
-    static func assemblePrompt(structured: Bool, vocabTerms: [String]) -> String {
-        let base = structured ? structuredPrompt : instantPrompt
+    /// 在风格 prompt 末尾追加词典提示，让模型按上下文判断是否替换
+    static func assemblePrompt(style: OutputStyle, vocabTerms: [String]) -> String {
+        let base = style.prompt
         let cleaned = vocabTerms
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -51,11 +25,11 @@ actor PolishService {
         """
     }
 
-    func polish(text: String, settings: PolishSettingsSnapshot, structured: Bool = false, vocabTerms: [String] = []) async throws -> String {
+    func polish(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = []) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = Self.assemblePrompt(structured: structured, vocabTerms: vocabTerms)
+        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms)
         let (request, parseResponse) = try buildRequest(text: text, settings: settings, prompt: activePrompt)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -231,11 +205,11 @@ actor PolishService {
     // MARK: - Streaming
 
     /// 流式润色 — 逐 token 回调，首字 ~0.5s 出现
-    func polishStream(text: String, settings: PolishSettingsSnapshot, structured: Bool = false, vocabTerms: [String] = [], onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
+    func polishStream(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = [], onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = Self.assemblePrompt(structured: structured, vocabTerms: vocabTerms)
+        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms)
         let (request, _) = try buildRequest(text: text, settings: settings, prompt: activePrompt, stream: true)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)

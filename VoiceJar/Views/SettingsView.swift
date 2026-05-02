@@ -10,6 +10,7 @@ struct SettingsView: View {
     enum SettingsTab: String, CaseIterable {
         case home = "主页"
         case general = "通用"
+        case style = "风格"
         case translate = "翻译"
         case ai = "AI 润色"
         case vocab = "词典"
@@ -19,6 +20,7 @@ struct SettingsView: View {
             switch self {
             case .home: return "house"
             case .general: return "gearshape"
+            case .style: return "paintpalette"
             case .translate: return "globe"
             case .ai: return "sparkles"
             case .vocab: return "character.book.closed"
@@ -41,6 +43,8 @@ struct SettingsView: View {
                 HomeSettingsView(appState: appState)
             case .general:
                 GeneralSettingsView(appState: appState)
+            case .style:
+                StyleSettingsView(appState: appState)
             case .translate:
                 TranslateSettingsView(appState: appState)
             case .ai:

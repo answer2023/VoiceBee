@@ -119,16 +119,15 @@ class VoiceEngine {
         log(suppress ? "⏸️ 翻译快捷键拦截已暂停（设置窗口）" : "▶️ 翻译快捷键拦截已恢复")
     }
 
-    /// 双击 Fn 切换润色模式
+    /// 双击 Fn 在启用的风格之间循环切换默认风格
     func togglePolishMode() {
-        appState.polishMode.toggle()
-        let mode = appState.polishMode
-        log("🔄 切换到: \(mode.rawValue)")
-        appState.statusMessage = mode == .instant ? "⚡ 即时模式" : "✨ 润色模式"
+        let next = appState.outputStyle.cycle()
+        log("🔄 切换风格 → \(next.title)")
+        appState.statusMessage = "切换到「\(next.title)」"
 
         // 显示浮窗短暂提示
         if overlayWindow == nil { overlayWindow = OverlayWindow() }
-        overlayWindow?.updateText(mode == .instant ? "⚡ 即时上屏" : "✨ 润色上屏")
+        overlayWindow?.updateText("切换到「\(next.title)」")
         overlayWindow?.show()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.hideOverlay()
@@ -313,11 +312,13 @@ class VoiceEngine {
 
         appState.rawTranscription = rawText
         let polishSnapshot = appState.polishSettings.snapshot
-        let isStructured = appState.polishMode == .structured && polishSnapshot.engine != .none
+        let style = appState.outputStyle.defaultStyle
+        let masterEnabled = appState.outputStyle.masterEnabled
+        let useStreamingMode = masterEnabled && polishSnapshot.engine != .none && !style.isImmediate
 
         let vocabTerms = appState.vocab.activeTerms
 
-        if isStructured {
+        if useStreamingMode {
             // 润色模式：流式显示 + 完成后上屏
             log("✨ 润色模式 — 流式 AI 整理")
             appState.isProcessing = true
@@ -327,13 +328,13 @@ class VoiceEngine {
             let polishService = self.polishService
             polishTask = Task { [weak self] in
                 guard let self else { return }
-                self.log("🔄 流式润色 (\(polishSnapshot.engine.rawValue))")
+                self.log("🔄 流式润色 [\(style.title)] (\(polishSnapshot.engine.rawValue))")
                 let finalText: String
                 do {
                     finalText = try await polishService.polishStream(
                         text: rawText,
                         settings: polishSnapshot,
-                        structured: true,
+                        style: style,
                         vocabTerms: vocabTerms
                     ) { [weak self] accumulated in
                         Task { @MainActor in
@@ -383,13 +384,13 @@ class VoiceEngine {
             addHistory(rawText: rawText, polishedText: rawText, duration: duration)
 
             // 后台润色 → 润色完成后自动替换已注入的原文
-            if polishSnapshot.engine != .none {
+            if masterEnabled && polishSnapshot.engine != .none {
                 appState.isProcessing = true
                 let polishService = self.polishService
                 polishTask = Task { [weak self] in
                     guard let self else { return }
                     do {
-                        let polished = try await polishService.polish(text: rawText, settings: polishSnapshot, vocabTerms: vocabTerms)
+                        let polished = try await polishService.polish(text: rawText, settings: polishSnapshot, style: style, vocabTerms: vocabTerms)
                         if Task.isCancelled { return }
                         await MainActor.run {
                             self.polishTask = nil
@@ -476,7 +477,7 @@ class VoiceEngine {
         if overlayWindow == nil {
             overlayWindow = OverlayWindow()
         }
-        overlayWindow?.setStructured(appState.polishMode == .structured)
+        overlayWindow?.setStructured(!appState.outputStyle.defaultStyle.isImmediate)
         overlayWindow?.updateText("")
         overlayWindow?.show()
     }
