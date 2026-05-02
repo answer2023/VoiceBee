@@ -32,6 +32,18 @@ final class HotkeyManager: @unchecked Sendable {
     var onCancel: (@Sendable () -> Void)?
     var isFlowActive: (@Sendable () -> Bool)?
 
+    /// 翻译触发键（Shift / Control / Option / Fn）— 录音中单击切换翻译标记
+    /// 主线程读写；nil 表示禁用
+    var translationTriggerMask: CGEventFlags?
+    /// 触发键单击的切换回调；参数 = 切换后的状态（true = 已标记翻译）
+    var onTranslateMidRecording: (@Sendable (Bool) -> Void)?
+    /// 当前是否已标记本次录音翻译（每次新录音前由 VoiceEngine 重置）
+    var translateMarked: Bool = false
+
+    private var triggerKeyDownTime: CFAbsoluteTime = 0
+    private var triggerKeyDownPending: Bool = false  // trigger 修饰键当前处于按下状态
+    private var triggerKeyDownHadOtherEvent: Bool = false  // 期间有其他 keyDown 介入
+
     @discardableResult
     static func checkAccessibility(prompt: Bool = true) -> Bool {
         // kAXTrustedCheckOptionPrompt 的实际值是 "AXTrustedCheckOptionPrompt"
@@ -107,6 +119,34 @@ final class HotkeyManager: @unchecked Sendable {
                 return true  // 消费事件，避免被前台 App 当作 Esc
             }
             return false
+        }
+
+        // 翻译触发键单击检测（仅录音中生效，不消费事件让透传给前台 App）
+        if isRecording, let triggerMask = translationTriggerMask {
+            if type == .flagsChanged {
+                let triggerHeld = flags.contains(triggerMask)
+                if triggerHeld && !triggerKeyDownPending {
+                    // 触发键按下：起算时长 + 清空"期间被打断"标记
+                    triggerKeyDownPending = true
+                    triggerKeyDownTime = CFAbsoluteTimeGetCurrent()
+                    triggerKeyDownHadOtherEvent = false
+                } else if !triggerHeld && triggerKeyDownPending {
+                    // 触发键松开：判断是否「单击」（< 800ms + 期间无其他键事件）
+                    let dur = CFAbsoluteTimeGetCurrent() - triggerKeyDownTime
+                    let isSingleTap = dur < 0.8 && !triggerKeyDownHadOtherEvent
+                    triggerKeyDownPending = false
+                    if isSingleTap {
+                        translateMarked.toggle()
+                        let marked = translateMarked
+                        HotkeyManager.log("🌐 录音中触发键单击 → 翻译标记 \(marked ? "ON" : "OFF")")
+                        let cb = onTranslateMidRecording
+                        DispatchQueue.main.async { cb?(marked) }
+                    }
+                }
+            } else if type == .keyDown && triggerKeyDownPending {
+                // 期间有其他 keyDown → 这是组合键（如 Shift+A），不算单击
+                triggerKeyDownHadOtherEvent = true
+            }
         }
 
         // 翻译快捷键（单击触发，消费事件防止字符输入）

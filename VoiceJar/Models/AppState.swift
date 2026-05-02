@@ -23,6 +23,7 @@ class AppState {
     let vocab = VocabStore()
     let stats = StatsStore()
     let outputStyle = OutputStyleSettings()
+    let translation = TranslationSettings()
 
     private static let historyFileURL: URL = {
         let fm = FileManager.default

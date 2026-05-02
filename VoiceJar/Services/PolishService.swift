@@ -4,14 +4,22 @@ import Foundation
 actor PolishService {
 
     /// 在风格 prompt 末尾追加词典提示，让模型按上下文判断是否替换
-    static func assemblePrompt(style: OutputStyle, vocabTerms: [String]) -> String {
-        let base = style.prompt
+    /// workingLanguages 注入到 prompt 头部影响多语言混输 / 专名 / 语气判断
+    static func assemblePrompt(style: OutputStyle, vocabTerms: [String], workingLanguages: [String] = []) -> String {
+        var sections: [String] = []
+        if !workingLanguages.isEmpty {
+            let langList = workingLanguages.joined(separator: ", ")
+            sections.append("用户的常用工作语言：\(langList)。处理多语言混输时，按上下文判断专名拼写、语气、行文习惯。")
+        }
+        sections.append(style.prompt)
         let cleaned = vocabTerms
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        guard !cleaned.isEmpty else { return base }
-        let list = cleaned.prefix(50).map { "- \($0)" }.joined(separator: "\n")
-        return base + "\n\n专有名词参考（按上下文判断是否替换；不要强行使用）：\n" + list
+        if !cleaned.isEmpty {
+            let list = cleaned.prefix(50).map { "- \($0)" }.joined(separator: "\n")
+            sections.append("专有名词参考（按上下文判断是否替换；不要强行使用）：\n" + list)
+        }
+        return sections.joined(separator: "\n\n")
     }
 
     /// 翻译 prompt
@@ -25,11 +33,11 @@ actor PolishService {
         """
     }
 
-    func polish(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = []) async throws -> String {
+    func polish(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = [], workingLanguages: [String] = []) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms)
+        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms, workingLanguages: workingLanguages)
         let (request, parseResponse) = try buildRequest(text: text, settings: settings, prompt: activePrompt)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -46,11 +54,15 @@ actor PolishService {
     }
 
     /// 翻译文本
-    func translate(text: String, settings: PolishSettingsSnapshot, targetLang: String) async throws -> String {
+    func translate(text: String, settings: PolishSettingsSnapshot, targetLang: String, workingLanguages: [String] = []) async throws -> String {
         guard settings.engine != .none else { throw PolishError.invalidConfig("请先配置 AI 引擎") }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let prompt = Self.translationPrompt(targetLang: targetLang)
+        var prompt = Self.translationPrompt(targetLang: targetLang)
+        if !workingLanguages.isEmpty {
+            let langList = workingLanguages.joined(separator: ", ")
+            prompt = "User's working languages: \(langList). Use this context to disambiguate proper nouns and tone.\n\n" + prompt
+        }
         let (request, parseResponse) = try buildRequest(text: text, settings: settings, prompt: prompt)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -205,11 +217,11 @@ actor PolishService {
     // MARK: - Streaming
 
     /// 流式润色 — 逐 token 回调，首字 ~0.5s 出现
-    func polishStream(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = [], onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
+    func polishStream(text: String, settings: PolishSettingsSnapshot, style: OutputStyle = .light, vocabTerms: [String] = [], workingLanguages: [String] = [], onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms)
+        let activePrompt = Self.assemblePrompt(style: style, vocabTerms: vocabTerms, workingLanguages: workingLanguages)
         let (request, _) = try buildRequest(text: text, settings: settings, prompt: activePrompt, stream: true)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)

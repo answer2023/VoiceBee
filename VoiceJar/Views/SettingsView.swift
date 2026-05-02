@@ -220,47 +220,106 @@ struct TranslateSettingsView: View {
         PolishEngine.allCases.filter { $0 != .none }
     }
 
+    private var conflictingTriggers: Set<TranslationTrigger> {
+        TranslationSettings.conflictingTriggers(mainModifiers: appState.hotkey.modifiers)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 Text("翻译")
                     .font(.system(size: 20, weight: .semibold))
 
-                // 使用说明
-                SettingsSection(title: "使用方法", description: "") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("1")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(.blue, in: Circle())
-                            Text("在任意应用中选中要翻译的文字")
-                                .font(.system(size: 13))
+                // 工作语言（多选 chip）
+                SettingsSection(
+                    title: "工作语言",
+                    description: "勾选你日常用到的语言（多选）。这组语言会作为前提注入 LLM 的 system prompt，影响润色与翻译对专名 / 语气 / 行文习惯的判断。"
+                ) {
+                    LanguageChipFlow(
+                        selected: Binding(
+                            get: { appState.translation.workingLanguages },
+                            set: { appState.translation.workingLanguages = $0 }
+                        )
+                    )
+                }
+
+                // 口述翻译目标语言
+                SettingsSection(
+                    title: "口述翻译目标语言",
+                    description: "选某语言后，录音中按一下触发键即可把转写翻译成此语言再插入光标。选「不启用」则触发键无任何效果。"
+                ) {
+                    Picker("", selection: Binding(
+                        get: { appState.translation.targetLanguage ?? .en },
+                        set: { newValue in
+                            // 用一个 sentinel option 代表 nil
+                            appState.translation.targetLanguage = newValue
                         }
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("2")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(.blue, in: Circle())
-                            Text("按下翻译快捷键")
-                                .font(.system(size: 13))
+                    )) {
+                        Text("不启用").tag(nil as WorkingLanguage?)
+                        Divider()
+                        ForEach(WorkingLanguage.allCases) { lang in
+                            Text(lang.displayName).tag(Optional(lang))
                         }
-                        HStack(alignment: .top, spacing: 10) {
-                            Text("3")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(.blue, in: Circle())
-                            Text("翻译结果自动复制到剪贴板，浮窗显示译文")
-                                .font(.system(size: 13))
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .onChange(of: appState.translation.targetLanguage) { _, _ in
+                        // VoiceEngine 在每次录音开始时自动 refresh，无需额外通知
+                    }
+                }
+
+                // 触发键（带冲突检测）
+                SettingsSection(
+                    title: "翻译触发键",
+                    description: "录音中单击此键标记本次走翻译管线；再按一下取消。事件不消费，会透传给前台 App。"
+                ) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(TranslationTrigger.allCases) { trigger in
+                            TriggerRow(
+                                trigger: trigger,
+                                isSelected: appState.translation.trigger == trigger,
+                                isConflict: conflictingTriggers.contains(trigger),
+                                showShiftWarning: trigger == .shift,
+                                onSelect: { appState.translation.trigger = trigger }
+                            )
                         }
                     }
                 }
 
-                // 快捷键
-                SettingsSection(title: "翻译快捷键", description: "选中文字后按此快捷键触发翻译") {
+                // 使用方法
+                SettingsSection(title: "使用方法", description: "") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        UsageStep(num: 1, text: "在任意 App 输入框聚焦光标")
+                        UsageStep(num: 2, text: "按住录音快捷键 (\(appState.hotkey.displayName)) 开始说话")
+                        UsageStep(num: 3, text: "录音中**任意时刻**单击「\(appState.translation.trigger.displayName)」一下，浮窗顶端会出现「● 正在翻译」蓝色药丸")
+                        UsageStep(num: 4, text: "松开录音键停止")
+                        UsageStep(num: 5, text: "系统把转写交给 LLM 翻译成目标语言并插入到光标")
+                    }
+                }
+
+                // 安全兜底
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("安全兜底")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("• 翻译目标语言选「不启用」时触发键完全无效。\n• 翻译过程中 LLM 调用失败 → 自动回退到原始转写直接插入，不会丢字。\n• 录音中已标记翻译可以再单击触发键取消标记。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+
+                Divider().padding(.vertical, 4)
+
+                Text("选词翻译")
+                    .font(.system(size: 16, weight: .semibold))
+
+                Text("选中已有文字 → 按快捷键 → 翻译结果复制到剪贴板。与口述翻译并行使用。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                // 选词翻译快捷键
+                SettingsSection(title: "选词翻译快捷键", description: "") {
                     HStack {
                         Text("快捷键")
                             .font(.system(size: 13))
@@ -271,8 +330,8 @@ struct TranslateSettingsView: View {
                     }
                 }
 
-                // 目标语言
-                SettingsSection(title: "目标语言", description: "翻译结果的输出语言") {
+                // 选词翻译目标语言（旧的 enum）
+                SettingsSection(title: "选词翻译目标语言", description: "") {
                     Picker("", selection: Binding(
                         get: { appState.translateTargetLang },
                         set: { appState.translateTargetLang = $0 }
@@ -286,7 +345,7 @@ struct TranslateSettingsView: View {
                 }
 
                 // 翻译引擎选择
-                SettingsSection(title: "翻译引擎", description: "选择用于翻译的 AI 服务（独立于润色引擎）") {
+                SettingsSection(title: "翻译引擎", description: "选择用于翻译的 AI 服务（独立于润色引擎，口述翻译与选词翻译共享）") {
                     VStack(spacing: 8) {
                         ForEach(availableEngines, id: \.self) { engine in
                             EngineOptionRow(
@@ -682,5 +741,134 @@ struct PermissionRow: View {
             .buttonStyle(.link)
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - 翻译辅助组件
+
+/// 工作语言多选 chip 流式布局
+private struct LanguageChipFlow: View {
+    @Binding var selected: Set<WorkingLanguage>
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(WorkingLanguage.allCases) { lang in
+                let isOn = selected.contains(lang)
+                Button {
+                    if isOn { selected.remove(lang) } else { selected.insert(lang) }
+                } label: {
+                    Text(lang.displayName)
+                        .font(.system(size: 12, weight: isOn ? .medium : .regular))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(isOn ? Color.blue : Color.secondary.opacity(0.12), in: Capsule())
+                        .foregroundStyle(isOn ? .white : Color.primary.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// 翻译触发键单行（含冲突灰显 + IME 警告）
+private struct TriggerRow: View {
+    let trigger: TranslationTrigger
+    let isSelected: Bool
+    let isConflict: Bool
+    let showShiftWarning: Bool
+    let onSelect: () -> Void
+
+    private var disabled: Bool { isConflict }
+
+    var body: some View {
+        Button(action: { if !disabled { onSelect() } }) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "circle.fill" : "circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isSelected ? Color.blue : .secondary.opacity(0.5))
+                Text(trigger.symbol)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .frame(width: 24)
+                    .foregroundStyle(disabled ? .tertiary : .primary)
+                Text(trigger.displayName)
+                    .font(.system(size: 13))
+                    .foregroundStyle(disabled ? .tertiary : .primary)
+                Spacer()
+                if isConflict {
+                    Text("与录音键冲突")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                } else if showShiftWarning {
+                    Text("⚠ 可能与输入法切换冲突")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange.opacity(0.8))
+                }
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+}
+
+/// 数字步骤行（蓝圆 + 文本）
+private struct UsageStep: View {
+    let num: Int
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(num)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(.blue, in: Circle())
+            Text(text)
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// 流式横向布局（已在 VocabSettingsView 用过；这里复制一份作私有以避免文件间依赖）
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var height: CGFloat = 0
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if rowWidth + size.width > maxWidth, rowWidth > 0 {
+                height += rowHeight + spacing
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        height += rowHeight
+        return CGSize(width: maxWidth.isFinite ? maxWidth : rowWidth, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }

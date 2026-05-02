@@ -53,6 +53,12 @@ class OverlayWindow {
         resizeAndReposition()
     }
 
+    /// 显示 / 隐藏「正在翻译」标记药丸（OpenLess 风格，主胶囊上方）
+    func showTranslationBadge(_ shown: Bool) {
+        contentModel.translateBadge = shown
+        resizeAndReposition()
+    }
+
     func showTranslated(_ text: String) {
         contentModel.state = .translated
         contentModel.text = text
@@ -157,8 +163,9 @@ class OverlayWindow {
             attributes: [.font: font]
         )
         let newWidth = min(max(size.width + 56, 160), maxWidth)
-        let extraHeight: CGFloat = contentModel.state == .translated ? 20 : 0
-        let newHeight = min(max(size.height + 24 + extraHeight, 44), 140)
+        var extraHeight: CGFloat = contentModel.state == .translated ? 20 : 0
+        if contentModel.translateBadge { extraHeight += 26 }  // 翻译药丸高度
+        let newHeight = min(max(size.height + 24 + extraHeight, 44), 160)
 
         var frame = window.frame
         frame.size.width = newWidth
@@ -175,6 +182,7 @@ class OverlayContentModel {
     var isPlaceholder: Bool = true
     var state: OverlayState = .recording
     var isStructured: Bool = false
+    var translateBadge: Bool = false  // 录音中按了触发键 → 蓝色药丸
 
     enum OverlayState {
         case recording, processing, done, translating, translated
@@ -185,38 +193,54 @@ struct OverlayContentView: View {
     @Bindable var model: OverlayContentModel
 
     var body: some View {
-        HStack(spacing: 10) {
-            // 状态指示点 — 垂直居中
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
-                .shadow(color: dotColor.opacity(0.6), radius: 3)
+        VStack(alignment: .leading, spacing: 4) {
+            // 翻译标记药丸（OpenLess 风格，主胶囊上方）
+            if model.translateBadge {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(.blue)
+                        .frame(width: 6, height: 6)
+                    Text("正在翻译")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.blue)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.blue.opacity(0.14), in: Capsule())
+            }
 
-            // 文字
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(model.isPlaceholder ? .secondary : .primary)
-                    .lineLimit(model.state == .translated ? 5 : 3)
-                    .fixedSize(horizontal: false, vertical: true)
+            // 主胶囊
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: dotColor.opacity(0.6), radius: 3)
 
-                if model.state == .translated {
-                    Text("已复制到剪贴板")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.text)
+                        .font(.system(size: 14))
+                        .foregroundStyle(model.isPlaceholder ? .secondary : .primary)
+                        .lineLimit(model.state == .translated ? 5 : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if model.state == .translated {
+                        Text("已复制到剪贴板")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.regularMaterial)
-                .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(.white.opacity(0.2), lineWidth: 0.5)
-                }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.regularMaterial)
+                    .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.white.opacity(0.2), lineWidth: 0.5)
+                    }
+            }
         }
     }
 

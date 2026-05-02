@@ -105,7 +105,29 @@ class VoiceEngine {
                 self.appState.isRecording || self.appState.isProcessing || self.appState.isTranslating
             }
         }
+        hotkeyManager.onTranslateMidRecording = { [weak self] marked in
+            Task { @MainActor in
+                self?.handleTranslateMarkChanged(marked)
+            }
+        }
+        // 初始注入翻译触发键
+        refreshTranslationTrigger()
         hotkeyManager.startListening()
+    }
+
+    /// 让 HotkeyManager 知道当前的翻译触发键（设置变化时由 UI 触发刷新）
+    func refreshTranslationTrigger() {
+        if appState.translation.isActiveForRecording {
+            hotkeyManager.translationTriggerMask = appState.translation.triggerMask
+        } else {
+            hotkeyManager.translationTriggerMask = nil
+        }
+    }
+
+    private func handleTranslateMarkChanged(_ marked: Bool) {
+        log("🌐 本次录音翻译标记 = \(marked)")
+        if overlayWindow == nil { overlayWindow = OverlayWindow() }
+        overlayWindow?.showTranslationBadge(marked)
     }
 
     /// 更新快捷键绑定
@@ -220,6 +242,9 @@ class VoiceEngine {
         appState.polishedText = ""
         appState.liveText = ""
         appState.errorMessage = nil
+        // 重置翻译标记 + 触发键（设置可能已变更）
+        hotkeyManager.translateMarked = false
+        refreshTranslationTrigger()
 
         // 设置流式识别的音频回调
         recorder.onAudioBuffer = { [weak self] buffer in
@@ -312,11 +337,29 @@ class VoiceEngine {
 
         appState.rawTranscription = rawText
         let polishSnapshot = appState.polishSettings.snapshot
+        let translateSnapshot = appState.translateSettings.snapshot
         let style = appState.outputStyle.defaultStyle
         let masterEnabled = appState.outputStyle.masterEnabled
         let useStreamingMode = masterEnabled && polishSnapshot.engine != .none && !style.isImmediate
 
         let vocabTerms = appState.vocab.activeTerms
+        let workingLangs = appState.translation.workingLanguages.map(\.promptName)
+
+        // 口述翻译分流：若用户在录音中标记了翻译且配置了目标语言 → 走翻译管线
+        let shouldTranslate = hotkeyManager.translateMarked &&
+            appState.translation.isActiveForRecording &&
+            translateSnapshot.engine != .none
+
+        if shouldTranslate, let targetLang = appState.translation.targetLanguage {
+            handleDictationTranslation(
+                rawText: rawText,
+                duration: duration,
+                targetLang: targetLang,
+                translateSnapshot: translateSnapshot,
+                workingLanguages: workingLangs
+            )
+            return
+        }
 
         if useStreamingMode {
             // 润色模式：流式显示 + 完成后上屏
@@ -424,6 +467,55 @@ class VoiceEngine {
             } else {
                 appState.polishedText = rawText
                 appState.statusMessage = "按住 \(appState.hotkey.displayName) 开始说话"
+            }
+        }
+    }
+
+    /// 口述翻译路径：转写 → translate(targetLang) → inject；失败 fallback 到 raw text
+    private func handleDictationTranslation(
+        rawText: String,
+        duration: TimeInterval,
+        targetLang: WorkingLanguage,
+        translateSnapshot: PolishSettingsSnapshot,
+        workingLanguages: [String]
+    ) {
+        log("🌐 走翻译管线 → \(targetLang.displayName)")
+        appState.isProcessing = true
+        appState.statusMessage = "翻译中…"
+        showOverlay()
+        overlayWindow?.showProcessing()
+        overlayWindow?.updateProcessingText("翻译为 \(targetLang.displayName)…")
+
+        let polishService = self.polishService
+        polishTask = Task { [weak self] in
+            guard let self else { return }
+            let finalText: String
+            do {
+                finalText = try await polishService.translate(
+                    text: rawText,
+                    settings: translateSnapshot,
+                    targetLang: targetLang.promptName,
+                    workingLanguages: workingLanguages
+                )
+                self.log("✅ 翻译结果: \(finalText)")
+            } catch {
+                self.log("⚠️ 翻译失败 fallback 到原文: \(error)")
+                finalText = rawText
+            }
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self.polishTask = nil
+                self.appState.polishedText = finalText
+                self.hideOverlay()
+                self.overlayWindow?.showTranslationBadge(false)
+                self.hotkeyManager.translateMarked = false
+                switch self.appState.inputMode {
+                case .universal: TextInjector.inject(finalText)
+                case .journal: self.openJournalWithText(finalText)
+                }
+                self.addHistory(rawText: rawText, polishedText: finalText, duration: duration)
+                self.appState.isProcessing = false
+                self.appState.statusMessage = "按住 \(self.appState.hotkey.displayName) 开始说话"
             }
         }
     }
