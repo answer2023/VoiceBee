@@ -28,6 +28,10 @@ final class HotkeyManager: @unchecked Sendable {
     var translateHotkey: HotkeyCombo = HotkeyCombo.loadTranslateHotkey()
     var onTranslate: (@Sendable () -> Void)?
 
+    /// Esc 取消回调；仅在 isFlowActive() 返回 true 时拦截 Esc 并触发
+    var onCancel: (@Sendable () -> Void)?
+    var isFlowActive: (@Sendable () -> Bool)?
+
     @discardableResult
     static func checkAccessibility(prompt: Bool = true) -> Bool {
         // kAXTrustedCheckOptionPrompt 的实际值是 "AXTrustedCheckOptionPrompt"
@@ -94,6 +98,16 @@ final class HotkeyManager: @unchecked Sendable {
         ensureTapEnabled()
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+
+        // Esc 取消：仅在 VoiceBee 流程活跃时拦截，否则让事件穿透
+        if type == .keyDown && keyCode == 53 {  // kVK_Escape
+            if isFlowActive?() == true, let cb = onCancel {
+                HotkeyManager.log("🛑 Esc 拦截 → 触发取消")
+                DispatchQueue.main.async { cb() }
+                return true  // 消费事件，避免被前台 App 当作 Esc
+            }
+            return false
+        }
 
         // 翻译快捷键（单击触发，消费事件防止字符输入）
         // suppressTranslateHotkey 为 true 时跳过，让事件传到设置窗口的快捷键录制器

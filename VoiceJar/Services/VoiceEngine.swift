@@ -16,6 +16,12 @@ class VoiceEngine {
     private var overlayWindow: OverlayWindow?
     private var lastInjectedText: String = ""
     private var lastInjectionTime: Date?
+    private var rotationTimer: Timer?
+    private var polishTask: Task<Void, Never>?
+    private var translateTask: Task<Void, Never>?
+
+    /// SFSpeech 单次会话上限约 60s，55s 触发轮换留余量
+    private let sessionRotationInterval: TimeInterval = 55
 
     private func log(_ msg: String) {
         VJLog.log(msg, prefix: "Engine")
@@ -86,6 +92,19 @@ class VoiceEngine {
                 self?.translateSelectedText()
             }
         }
+        hotkeyManager.onCancel = { [weak self] in
+            Task { @MainActor in
+                self?.cancelInFlight()
+            }
+        }
+        hotkeyManager.isFlowActive = { [weak self] in
+            guard let self else { return false }
+            // CGEventTap callback 运行在主 RunLoop 上（VoiceEngine 是 @MainActor 注册的），
+            // 但编译器看不到这层运行时保证，需要显式 assumeIsolated。
+            return MainActor.assumeIsolated {
+                self.appState.isRecording || self.appState.isProcessing || self.appState.isTranslating
+            }
+        }
         hotkeyManager.startListening()
     }
 
@@ -136,13 +155,14 @@ class VoiceEngine {
         let targetLang = appState.translateTargetLang.promptDescription
         let polishService = self.polishService
 
-        Task {
+        translateTask = Task {
             // 抓取选中文本
             guard let selectedText = await TextInjector.grabSelectedText(),
                   !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.log("⚠️ 未获取到选中文本")
                 self.overlayWindow?.updateText("未选中文本")
                 self.appState.isTranslating = false
+                self.translateTask = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                     self?.hideOverlay()
                 }
@@ -165,6 +185,7 @@ class VoiceEngine {
                 // 显示结果
                 self.overlayWindow?.showTranslated(translated)
                 self.appState.isTranslating = false
+                self.translateTask = nil
 
                 // 5秒后自动隐藏
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
@@ -177,6 +198,7 @@ class VoiceEngine {
                 self.log("❌ 翻译失败: \(error)")
                 self.overlayWindow?.updateText("翻译失败: \(error.localizedDescription)")
                 self.appState.isTranslating = false
+                self.translateTask = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                     self?.hideOverlay()
                 }
@@ -243,6 +265,16 @@ class VoiceEngine {
             // 显示浮窗
             showOverlay()
 
+            // 启动会话轮换 timer：每 55s 切一次新 ASR session 绕开 60s 限制
+            rotationTimer?.invalidate()
+            rotationTimer = Timer.scheduledTimer(withTimeInterval: sessionRotationInterval, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.appState.isRecording else { return }
+                    self.log("🔄 ASR 会话轮换（避免 60s 上限）")
+                    self.recognizer.rotate()
+                }
+            }
+
             log("✅ 流式录音已启动")
         } catch {
             log("❌ 录音启动失败: \(error)")
@@ -257,7 +289,9 @@ class VoiceEngine {
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         log("⏹️ 停止录音，时长: \(String(format: "%.1f", duration))秒")
 
-        // 停止录音
+        // 停止录音 + 轮换 timer
+        rotationTimer?.invalidate()
+        rotationTimer = nil
         let _ = recorder.stopRecording()
         recorder.onAudioBuffer = nil
 
@@ -291,7 +325,8 @@ class VoiceEngine {
             overlayWindow?.updateProcessingText("整理中…")
 
             let polishService = self.polishService
-            Task {
+            polishTask = Task { [weak self] in
+                guard let self else { return }
                 self.log("🔄 流式润色 (\(polishSnapshot.engine.rawValue))")
                 let finalText: String
                 do {
@@ -311,7 +346,10 @@ class VoiceEngine {
                     finalText = rawText
                 }
 
+                if Task.isCancelled { return }
+
                 await MainActor.run {
+                    self.polishTask = nil
                     self.appState.polishedText = finalText
                     self.appState.vocab.recordHits(in: finalText)
                     self.hideOverlay()
@@ -348,10 +386,13 @@ class VoiceEngine {
             if polishSnapshot.engine != .none {
                 appState.isProcessing = true
                 let polishService = self.polishService
-                Task {
+                polishTask = Task { [weak self] in
+                    guard let self else { return }
                     do {
                         let polished = try await polishService.polish(text: rawText, settings: polishSnapshot, vocabTerms: vocabTerms)
+                        if Task.isCancelled { return }
                         await MainActor.run {
+                            self.polishTask = nil
                             self.appState.polishedText = polished
                             self.appState.vocab.recordHits(in: polished)
                             self.appState.isProcessing = false
@@ -371,7 +412,9 @@ class VoiceEngine {
                             }
                         }
                     } catch {
+                        if Task.isCancelled { return }
                         await MainActor.run {
+                            self.polishTask = nil
                             self.appState.polishedText = rawText
                             self.appState.isProcessing = false
                         }
@@ -382,6 +425,37 @@ class VoiceEngine {
                 appState.statusMessage = "按住 \(appState.hotkey.displayName) 开始说话"
             }
         }
+    }
+
+    /// 全链路取消（Esc 触发）— 干净地中止任何正在进行的录音 / 识别 / 润色 / 翻译
+    func cancelInFlight() {
+        guard appState.isRecording || appState.isProcessing || appState.isTranslating else {
+            return
+        }
+        log("🛑 Esc 取消全链路")
+
+        // 1. 录音 + ASR
+        rotationTimer?.invalidate()
+        rotationTimer = nil
+        if appState.isRecording {
+            _ = recorder.stopRecording()
+            recorder.onAudioBuffer = nil
+        }
+        recognizer.cancel()
+
+        // 2. 异步任务
+        polishTask?.cancel()
+        polishTask = nil
+        translateTask?.cancel()
+        translateTask = nil
+
+        // 3. UI / 状态
+        hideOverlay()
+        appState.isRecording = false
+        appState.isProcessing = false
+        appState.isTranslating = false
+        appState.liveText = ""
+        appState.statusMessage = "已取消 · 按住 \(appState.hotkey.displayName) 开始说话"
     }
 
     private func addHistory(rawText: String, polishedText: String, duration: TimeInterval) {

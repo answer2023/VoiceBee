@@ -10,6 +10,22 @@ final class SpeechRecognizer {
     private var streamingRequest: SFSpeechAudioBufferRecognitionRequest?
     private var currentLanguage: String
 
+    // 会话轮换：SFSpeechRecognizer 单次约 60s 限制，超过会静默失败。
+    // rotate() 把已识别文本存到 finalizedSegments，重开 request 继续接收 buffer。
+    private var finalizedSegments: [String] = []
+    private var currentBestText: String = ""
+    private var contextualStringsCache: [String] = []
+    private var partialCallback: ((String) -> Void)?
+    private var finalCallback: ((String) -> Void)?
+    private var errorCallback: ((Error) -> Void)?
+    private var activeSessionToken: UUID?  // 过滤被 rotate 替换的旧 session 残余回调
+
+    /// 当前累计完整文本（已 finalize 的段 + 当前 session 的 best）
+    var fullTranscript: String {
+        let parts = finalizedSegments + (currentBestText.isEmpty ? [] : [currentBestText])
+        return parts.joined(separator: " ")
+    }
+
     init(language: String = "zh-Hans") {
         self.currentLanguage = language
         self.recognizer = SFSpeechRecognizer(locale: Locale(identifier: language))
@@ -46,28 +62,67 @@ final class SpeechRecognizer {
             return
         }
 
+        // 重置会话状态
+        finalizedSegments = []
+        currentBestText = ""
+        contextualStringsCache = contextualStrings
+        partialCallback = onPartialResult
+        finalCallback = onFinalResult
+        errorCallback = onError
+
+        startSession()
+    }
+
+    /// 启动一个新的 ASR session（用于初次启动 + 轮换）
+    private func startSession() {
+        guard let recognizer, recognizer.isAvailable else {
+            errorCallback?(RecognitionError.unavailable)
+            return
+        }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
-        if !contextualStrings.isEmpty {
-            request.contextualStrings = contextualStrings
+        if !contextualStringsCache.isEmpty {
+            request.contextualStrings = contextualStringsCache
         }
-
         streamingRequest = request
 
-        recognitionTask = recognizer.recognitionTask(with: request) { result, error in
+        let token = UUID()
+        activeSessionToken = token
+
+        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self, self.activeSessionToken == token else { return }
             if let error {
-                onError(error)
+                self.errorCallback?(error)
                 return
             }
             guard let result else { return }
             let text = result.bestTranscription.formattedString
+            self.currentBestText = text
+            let combined = self.fullTranscript
             if result.isFinal {
-                onFinalResult(text)
+                self.finalCallback?(combined)
             } else {
-                onPartialResult(text)
+                self.partialCallback?(combined)
             }
         }
+    }
+
+    /// 轮换会话：把当前文本归档为已完成段，重启新 session 继续接收音频
+    /// 用于绕过 SFSpeech 单次 ~60s 限制
+    func rotate() {
+        guard streamingRequest != nil else { return }
+        if !currentBestText.isEmpty {
+            finalizedSegments.append(currentBestText)
+        }
+        currentBestText = ""
+        // 收尾旧 session
+        streamingRequest?.endAudio()
+        recognitionTask?.cancel()
+        streamingRequest = nil
+        recognitionTask = nil
+        // 立即开新 session 接管后续 buffer
+        startSession()
     }
 
     /// 往流式识别中追加音频数据
@@ -109,12 +164,18 @@ final class SpeechRecognizer {
         }
     }
 
-    /// 取消当前识别
+    /// 取消当前识别（清除所有状态）
     func cancel() {
+        activeSessionToken = nil
         recognitionTask?.cancel()
         recognitionTask = nil
         streamingRequest?.endAudio()
         streamingRequest = nil
+        finalizedSegments = []
+        currentBestText = ""
+        partialCallback = nil
+        finalCallback = nil
+        errorCallback = nil
     }
 
     enum RecognitionError: LocalizedError {
