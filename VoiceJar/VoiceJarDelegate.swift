@@ -9,6 +9,12 @@ struct VoiceJarMain {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("voicejar_debug.log")
         try? "MAIN ENTRY\n".data(using: .utf8)?.write(to: url)
 
+        // 单实例锁：若已有 VoiceBee 在运行，激活旧实例并退出
+        if let existing = Self.findExistingInstance() {
+            existing.activate()
+            exit(0)
+        }
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let delegate = VoiceJarDelegate()
@@ -21,6 +27,13 @@ struct VoiceJarMain {
         }
 
         app.run()
+    }
+
+    private static func findExistingInstance() -> NSRunningApplication? {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.clearsky.VoiceJar"
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first { $0.processIdentifier != myPID }
     }
 }
 
@@ -87,6 +100,10 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         // 引擎
         engine = VoiceEngine(appState: appState)
         log("引擎已启动, 快捷键: \(appState.hotkey.displayName)")
+
+        // 自动更新（Sparkle 会按 SUScheduledCheckInterval 周期检查）
+        _ = UpdaterManager.shared
+        log("Sparkle updater 已启动")
 
         // 首次启动引导
         if !UserDefaults.standard.bool(forKey: "onboardingCompleted") {

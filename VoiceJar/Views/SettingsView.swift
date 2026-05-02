@@ -5,19 +5,23 @@ import Speech
 /// 设置窗口 — 现代化侧边栏布局
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
-    @State private var selectedTab: SettingsTab = .general
+    @State private var selectedTab: SettingsTab = .home
 
     enum SettingsTab: String, CaseIterable {
+        case home = "主页"
         case general = "通用"
         case translate = "翻译"
         case ai = "AI 润色"
+        case vocab = "词典"
         case about = "关于"
 
         var icon: String {
             switch self {
+            case .home: return "house"
             case .general: return "gearshape"
             case .translate: return "globe"
             case .ai: return "sparkles"
+            case .vocab: return "character.book.closed"
             case .about: return "info.circle"
             }
         }
@@ -33,12 +37,16 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 140, ideal: 160, max: 180)
         } detail: {
             switch selectedTab {
+            case .home:
+                HomeSettingsView(appState: appState)
             case .general:
                 GeneralSettingsView(appState: appState)
             case .translate:
                 TranslateSettingsView(appState: appState)
             case .ai:
                 AISettingsView(appState: appState)
+            case .vocab:
+                VocabSettingsView(appState: appState)
             case .about:
                 AboutSettingsView()
             }
@@ -463,6 +471,13 @@ struct AboutSettingsView: View {
             Text("按住说话，松开输入")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
+
+            Button("检查更新") {
+                UpdaterManager.shared.checkForUpdates()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .padding(.top, 4)
 
             VStack(spacing: 4) {
                 Text("中文语音输入，快人一步")

@@ -29,6 +29,17 @@ actor PolishService {
     直接输出整理后的文本，不要加任何解释、前缀或引号。
     """
 
+    /// 在基础 prompt 末尾追加词典提示，让模型按上下文判断是否替换
+    static func assemblePrompt(structured: Bool, vocabTerms: [String]) -> String {
+        let base = structured ? structuredPrompt : instantPrompt
+        let cleaned = vocabTerms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return base }
+        let list = cleaned.prefix(50).map { "- \($0)" }.joined(separator: "\n")
+        return base + "\n\n专有名词参考（按上下文判断是否替换；不要强行使用）：\n" + list
+    }
+
     /// 翻译 prompt
     static func translationPrompt(targetLang: String) -> String {
         """
@@ -40,11 +51,11 @@ actor PolishService {
         """
     }
 
-    func polish(text: String, settings: PolishSettingsSnapshot, structured: Bool = false) async throws -> String {
+    func polish(text: String, settings: PolishSettingsSnapshot, structured: Bool = false, vocabTerms: [String] = []) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = structured ? Self.structuredPrompt : Self.instantPrompt
+        let activePrompt = Self.assemblePrompt(structured: structured, vocabTerms: vocabTerms)
         let (request, parseResponse) = try buildRequest(text: text, settings: settings, prompt: activePrompt)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -220,11 +231,11 @@ actor PolishService {
     // MARK: - Streaming
 
     /// 流式润色 — 逐 token 回调，首字 ~0.5s 出现
-    func polishStream(text: String, settings: PolishSettingsSnapshot, structured: Bool = false, onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
+    func polishStream(text: String, settings: PolishSettingsSnapshot, structured: Bool = false, vocabTerms: [String] = [], onChunk: @Sendable @escaping (String) -> Void) async throws -> String {
         guard settings.engine != .none else { return text }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
 
-        let activePrompt = structured ? Self.structuredPrompt : Self.instantPrompt
+        let activePrompt = Self.assemblePrompt(structured: structured, vocabTerms: vocabTerms)
         let (request, _) = try buildRequest(text: text, settings: settings, prompt: activePrompt, stream: true)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)

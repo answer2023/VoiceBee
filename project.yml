@@ -10,12 +10,19 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.7.1"
+
 targets:
   VoiceJar:
     type: application
     platform: macOS
     sources:
       - VoiceJar
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.clearsky.VoiceJar

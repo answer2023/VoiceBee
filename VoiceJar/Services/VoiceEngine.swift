@@ -205,8 +205,9 @@ class VoiceEngine {
             self?.recognizer.appendBuffer(buffer)
         }
 
-        // 启动流式识别
+        // 启动流式识别（注入词典作为 contextualStrings）
         recognizer.startStreaming(
+            contextualStrings: appState.vocab.activeTerms,
             onPartialResult: { [weak self] text in
                 DispatchQueue.main.async {
                     self?.appState.liveText = text
@@ -280,6 +281,8 @@ class VoiceEngine {
         let polishSnapshot = appState.polishSettings.snapshot
         let isStructured = appState.polishMode == .structured && polishSnapshot.engine != .none
 
+        let vocabTerms = appState.vocab.activeTerms
+
         if isStructured {
             // 润色模式：流式显示 + 完成后上屏
             log("✨ 润色模式 — 流式 AI 整理")
@@ -295,7 +298,8 @@ class VoiceEngine {
                     finalText = try await polishService.polishStream(
                         text: rawText,
                         settings: polishSnapshot,
-                        structured: true
+                        structured: true,
+                        vocabTerms: vocabTerms
                     ) { [weak self] accumulated in
                         Task { @MainActor in
                             self?.overlayWindow?.updateProcessingText(accumulated)
@@ -309,6 +313,7 @@ class VoiceEngine {
 
                 await MainActor.run {
                     self.appState.polishedText = finalText
+                    self.appState.vocab.recordHits(in: finalText)
                     self.hideOverlay()
 
                     switch self.appState.inputMode {
@@ -345,9 +350,10 @@ class VoiceEngine {
                 let polishService = self.polishService
                 Task {
                     do {
-                        let polished = try await polishService.polish(text: rawText, settings: polishSnapshot)
+                        let polished = try await polishService.polish(text: rawText, settings: polishSnapshot, vocabTerms: vocabTerms)
                         await MainActor.run {
                             self.appState.polishedText = polished
+                            self.appState.vocab.recordHits(in: polished)
                             self.appState.isProcessing = false
                             self.appState.statusMessage = "按住 \(self.appState.hotkey.displayName) 开始说话"
 
@@ -387,6 +393,7 @@ class VoiceEngine {
         if appState.history.count > 50 {
             appState.history = Array(appState.history.prefix(50))
         }
+        appState.stats.record(chars: polishedText.count, seconds: duration)
     }
 
     // MARK: - 浮窗

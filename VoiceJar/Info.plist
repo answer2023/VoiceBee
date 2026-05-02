@@ -22,5 +22,13 @@
     <string>VoiceBee 需要访问麦克风来进行语音识别</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>VoiceBee 使用语音识别将您的语音转为文字</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/clearsky/VoiceBee/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string></string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>

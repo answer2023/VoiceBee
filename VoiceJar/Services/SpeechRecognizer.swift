@@ -36,7 +36,9 @@ final class SpeechRecognizer {
     // MARK: - 流式实时识别
 
     /// 开始流式识别，返回 partial results 通过回调
-    func startStreaming(onPartialResult: @escaping (String) -> Void,
+    /// - Parameter contextualStrings: 词典专名，注入识别引擎以提升专名识别准确率
+    func startStreaming(contextualStrings: [String] = [],
+                        onPartialResult: @escaping (String) -> Void,
                         onFinalResult: @escaping (String) -> Void,
                         onError: @escaping (Error) -> Void) {
         guard let recognizer, recognizer.isAvailable else {
@@ -47,6 +49,9 @@ final class SpeechRecognizer {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
+        if !contextualStrings.isEmpty {
+            request.contextualStrings = contextualStrings
+        }
 
         streamingRequest = request
 

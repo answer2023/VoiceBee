@@ -19,6 +19,8 @@ class AppState {
     var polishMode: PolishMode = .instant
     var polishSettings = PolishSettings(keyPrefix: "polish")
     var translateSettings = PolishSettings(keyPrefix: "translate")
+    let vocab = VocabStore()
+    let stats = StatsStore()
 
     /// 识别语言
     var recognitionLanguage: RecognitionLanguage {
