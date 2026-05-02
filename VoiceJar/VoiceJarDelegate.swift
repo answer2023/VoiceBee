@@ -102,8 +102,9 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         log("引擎已启动, 快捷键: \(appState.hotkey.displayName)")
 
         // 自动更新（Sparkle 会按 SUScheduledCheckInterval 周期检查）
+        // 仅在 SUPublicEDKey 已配置时才启动周期检查；否则 updater 创建但不启动，避免空公钥下报错。
         _ = UpdaterManager.shared
-        log("Sparkle updater 已启动")
+        log(UpdaterManager.isConfigured ? "Sparkle updater 已启动" : "Sparkle 未配置（SUPublicEDKey 空），updater 待激活")
 
         // 首次启动引导
         if !UserDefaults.standard.bool(forKey: "onboardingCompleted") {

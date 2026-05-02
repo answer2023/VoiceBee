@@ -472,12 +472,19 @@ struct AboutSettingsView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
 
-            Button("检查更新") {
-                UpdaterManager.shared.checkForUpdates()
+            if UpdaterManager.isConfigured {
+                Button("检查更新") {
+                    UpdaterManager.shared.checkForUpdates()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .padding(.top, 4)
+            } else {
+                Text("自动更新未配置（开发版）")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .padding(.top, 4)
 
             VStack(spacing: 4) {
                 Text("中文语音输入，快人一步")
