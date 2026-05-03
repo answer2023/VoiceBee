@@ -11,7 +11,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 runner 最高只到 Xcode 16.1；项目要求 16.3 必须用 macos-15
+    runs-on: macos-15
     timeout-minutes: 20
 
     steps:
@@ -43,7 +44,8 @@ jobs:
             clean build
 
   lint:
-    runs-on: macos-14
+    # SwiftLint 不依赖 Xcode；统一 macos-15 简化 runner 矩阵
+    runs-on: macos-15
     timeout-minutes: 5
 
     steps:
