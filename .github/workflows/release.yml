@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 把所有可能被外部输入污染的字段先存到 env，避免 ${{ ... }} 直接进 run: 引发命令注入
       - name: Resolve version
