@@ -22,6 +22,14 @@ disabled_rules:
   - nesting                  # SwiftUI body 内嵌套是正常的
   - large_tuple              # 函数返回 (URLRequest, parser) 这种是有意为之
 
+  # masterEnabled 是已发布版本的持久化属性（UserDefaults key: outputStyle_master）。
+  # 重命名需要写数据迁移代码，作为独立任务跟踪。新代码应使用 inclusive 术语。
+  - inclusive_language
+
+  # 项目现有代码 trailing comma 风格混杂，disabled 保持现状。
+  # 如未来要统一，改为 mandatory: true 并批量加逗号。
+  - trailing_comma
+
 opt_in_rules:
   - empty_count
   - empty_string
