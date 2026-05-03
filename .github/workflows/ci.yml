@@ -1,0 +1,58 @@
+name: CI
+
+# 触发：PR / push 到 master / 手动
+# 注意：tag 触发的发版流程在 release.yml；此 workflow 只做日常质量门
+# 安全：本 workflow 不使用任何 ${{ github.event.* }} 用户可控字段，无注入面
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.3'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen
+
+      - name: Build (ad-hoc, no signing)
+        run: |
+          xcodebuild \
+            -project VoiceJar.xcodeproj \
+            -scheme VoiceJar \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+  lint:
+    runs-on: macos-14
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      # 起步不加 --strict — 历史代码可能有 warning，先让 CI 绿，逐步清理后再启用
+      - name: Run SwiftLint
+        run: swiftlint --reporter github-actions-logging

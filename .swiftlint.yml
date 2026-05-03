@@ -1,0 +1,43 @@
+# SwiftLint 配置 — 起步从宽，避免大规模噪声
+# 参考：https://realm.github.io/SwiftLint/rule-directory.html
+# 哲学：只挡明显问题，不强制风格细节；正向规则按需 opt_in 增加
+
+included:
+  - VoiceJar
+
+excluded:
+  - build
+  - .build
+  - VoiceJar.xcodeproj
+
+# 关掉对当前代码风格不友好的默认规则；后续清理后可逐条移除
+disabled_rules:
+  - line_length              # 长链式 SwiftUI / 多语言注释天然偏长
+  - file_length              # AppState/SettingsView 是合理的「大文件」
+  - type_body_length         # 同上
+  - function_body_length     # VoiceEngine 流程函数较长属业务必然
+  - cyclomatic_complexity    # handleCGEvent 这类事件路由有合理复杂度
+  - todo                     # TODO 注释允许
+  - identifier_name          # 暂不强制，HotkeyCombo 等用 keyCode 简写
+  - nesting                  # SwiftUI body 内嵌套是正常的
+  - large_tuple              # 函数返回 (URLRequest, parser) 这种是有意为之
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - explicit_init
+  - first_where
+  - last_where
+  - reduce_into
+  - sorted_first_last
+  - unused_import
+  - unused_declaration
+  - redundant_nil_coalescing
+  - closure_end_indentation
+  - prefer_self_type_over_type_of_self
+  - toggle_bool
+
+# 个别强规则降级为 warning
+force_cast: warning
+force_try: warning
+force_unwrapping: warning
