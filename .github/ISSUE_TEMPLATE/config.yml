@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 讨论 / 提问 / 想法
+    url: https://github.com/answer2023/VoiceBee/discussions
+    about: 不确定是不是 bug 或想先聊一下？走 Discussions。
