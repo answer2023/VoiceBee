@@ -83,7 +83,7 @@ final class TranslationSettings {
     var workingLanguages: Set<WorkingLanguage> = [.zhHans, .en] {
         didSet { save() }
     }
-    var targetLanguage: WorkingLanguage? = nil {  // nil = 不启用翻译模式
+    var targetLanguage: WorkingLanguage? {  // nil = 不启用翻译模式
         didSet { save() }
     }
     var trigger: TranslationTrigger = TranslationSettings.smartDefaultTrigger {

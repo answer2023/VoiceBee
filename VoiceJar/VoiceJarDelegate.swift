@@ -7,7 +7,7 @@ import Speech
 struct VoiceJarMain {
     static func main() {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("voicejar_debug.log")
-        try? "MAIN ENTRY\n".data(using: .utf8)?.write(to: url)
+        try? Data("MAIN ENTRY\n".utf8).write(to: url)
 
         // 单实例锁：若已有 VoiceBee 在运行，激活旧实例并退出
         if let existing = Self.findExistingInstance() {
@@ -22,7 +22,7 @@ struct VoiceJarMain {
 
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()
-            handle.write("BEFORE app.run()\n".data(using: .utf8)!)
+            handle.write(Data("BEFORE app.run()\n".utf8))
             handle.closeFile()
         }
 
