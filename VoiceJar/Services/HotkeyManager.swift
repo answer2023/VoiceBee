@@ -101,7 +101,16 @@ final class HotkeyManager: @unchecked Sendable {
 
     func rebind(to combo: HotkeyCombo) {
         hotkey = combo
-        print("🔄 快捷键已切换为: \(combo.displayName)")
+        HotkeyManager.log("🔄 快捷键已切换为: \(combo.displayName)")
+    }
+
+    /// 由 VoiceEngine 在 cancelInFlight / 暂停切换时调用，把内部 isRecording 标志同步回 false。
+    /// 不触发 onRecordStop 回调（VoiceEngine 已经自己处理状态），只对齐状态机。
+    func syncRecordingStopped() {
+        isRecording = false
+        triggerKeyDownPending = false
+        pendingRecordStart?.cancel()
+        pendingRecordStart = nil
     }
 
     /// 系统有时会自动关闭 event tap（超时等原因），定期检查并重新启用
@@ -131,7 +140,20 @@ final class HotkeyManager: @unchecked Sendable {
         }
 
         // 全局暂停：所有其他快捷键直接放行，不消费、不触发回调
-        if isPaused { return false }
+        // 关键：若暂停瞬间正在录音，必须把内部 isRecording / 待启动 timer 同步关掉，
+        // 否则后续 flagsChanged 永远走不到「修饰键松开 → onRecordStop」分支，
+        // 状态机卡死，恢复后再按快捷键也起不来。
+        if isPaused {
+            if isRecording {
+                isRecording = false
+                let cb = onRecordStop
+                DispatchQueue.main.async { cb?() }
+            }
+            triggerKeyDownPending = false
+            pendingRecordStart?.cancel()
+            pendingRecordStart = nil
+            return false
+        }
 
         // 翻译触发键单击检测（仅录音中生效，不消费事件让透传给前台 App）
         if isRecording, let triggerMask = translationTriggerMask {

@@ -11,6 +11,9 @@ struct TextInjector {
 
     /// 通过模拟剪贴板粘贴注入文本（最可靠的方式）
     static func inject(_ text: String) {
+        // nonisolated(unsafe) 的合同：所有调用必须在主线程。debug-only 守卫，0 release 成本。
+        assert(Thread.isMainThread, "TextInjector.inject must be called on main thread")
+
         // 0. 记录最后一次注入文本（不区分来源：录音 / 翻译 / 历史重粘贴都算）
         if !text.isEmpty { lastInjectedText = text }
 

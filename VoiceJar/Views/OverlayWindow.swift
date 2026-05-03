@@ -103,7 +103,9 @@ class OverlayWindow {
         guard let window else { return }
 
         // 菜单栏屏幕（AppKit 全局坐标的锚点屏） — 用于 AX → AppKit Y 翻转
-        let primaryScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.main
+        // Apple 文档保证 NSScreen.screens 第一个元素是含菜单栏的屏；
+        // frame.origin == .zero 在用户调整显示器排列后不一定成立
+        let primaryScreen = NSScreen.screens.first ?? NSScreen.main
 
         var caretPoint: NSPoint?
 

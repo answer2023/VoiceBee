@@ -587,6 +587,11 @@ class VoiceEngine {
         }
         recognizer.cancel()
 
+        // HotkeyManager 内部 isRecording 必须同步关掉 — 否则用户松开 Fn 时
+        // 第二次触发 onRecordStop，进 stopRecordingAndProcess 撞 guard 静默 return，
+        // 状态机不一致，下次按快捷键也起不来
+        hotkeyManager.syncRecordingStopped()
+
         // 2. 异步任务
         polishTask?.cancel()
         polishTask = nil
