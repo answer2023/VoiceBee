@@ -1,22 +1,26 @@
 # Backlog
 
-## release.yml validation error（待修）
+## release.yml YAML validation error(待修)
 
-**现象**：每次 master push 触发一次 failed run，validation 阶段就失败，从未真正执行
+**现象**:每次 master push 触发一次 failed run,validation 阶段就失败,从未真正执行。
 
-**GitHub 报错**：Invalid workflow file: .github/workflows/release.yml#L1
+**GitHub UI 报错**:
+Invalid workflow file: .github/workflows/release.yml#L1
 (Line: 169, Col: 14): An expression was expected
 
-**事实**：
-- Line 169 是 `run: |`，本身无 `${{ }}` 表达式
-- 前面 line 165-168 是 env 块，4 个 step output 引用：version / tag / dmg.size / sparkle.signature
-- GitHub 报错行号疑似不准，真凶在前面某个 step output 引用
+**actionlint 实际定位**(更准):
+line 169 col 226: unexpected end of input while parsing variable access,
+function call, null, bool, int, float or string
 
-**下次处理建议**：
-- 用 actionlint 工具本地校验（`brew install actionlint && actionlint .github/workflows/release.yml`）
-- 或查 GitHub Actions 文档关于 step outputs 在 env 块里引用的静态校验规则
-- 修法等真正诊断完成后再决定
+**诊断**:line 169 col 226 附近某个 `${{ ... }}` 表达式缺闭合(`}}` 或 `)` 之类)。GitHub UI 报的 col 14 是误导,真实位置在 col 226。
 
-**不影响**：CI workflow（绿）、代码运行、未来发版前的修复机会
+**下次处理建议**:
+1. `cat -n .github/workflows/release.yml | sed -n '169p'` 看 line 169 完整内容
+2. 数到 col 226 看是哪个 `${{ }}` 表达式
+3. 修闭合
+4. 跑 `actionlint .github/workflows/release.yml` 验证
+5. 修通过后 commit + push
 
-**不修的代价**：Actions 页面每次 push 多一条红色 failed run，可能发垃圾邮件
+**不影响**:CI workflow(绿)、代码运行、未来发版前的修复机会
+
+**不修的代价**:Actions 页面每次 push 多一条红色 failed run,可能发垃圾邮件
