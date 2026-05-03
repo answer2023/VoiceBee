@@ -19,6 +19,10 @@ final class HotkeyManager: @unchecked Sendable {
     /// 设置窗口活跃时暂停翻译快捷键拦截（避免录制时被消费）
     var suppressTranslateHotkey = false
 
+    /// 全局暂停 — 菜单栏切换。true 时所有快捷键事件都直接放行不消费、不触发回调
+    /// 注意：Esc 取消仍生效（它是为了让用户取消已经在跑的录音/润色，与暂停状态无关）
+    var isPaused = false
+
     var onRecordStart: (@Sendable () -> Void)?
     var onRecordStop: (@Sendable () -> Void)?
     /// 双击 Fn 回调
@@ -27,6 +31,10 @@ final class HotkeyManager: @unchecked Sendable {
     /// 翻译快捷键及回调（单击触发）
     var translateHotkey: HotkeyCombo = HotkeyCombo.loadTranslateHotkey()
     var onTranslate: (@Sendable () -> Void)?
+
+    /// "重复粘贴上次结果"快捷键及回调（单击触发）
+    var repeatLastHotkey: HotkeyCombo = HotkeyCombo.loadRepeatLastHotkey()
+    var onRepeatLast: (@Sendable () -> Void)?
 
     /// Esc 取消回调；仅在 isFlowActive() 返回 true 时拦截 Esc 并触发
     var onCancel: (@Sendable () -> Void)?
@@ -112,6 +120,7 @@ final class HotkeyManager: @unchecked Sendable {
         let flags = event.flags
 
         // Esc 取消：仅在 VoiceBee 流程活跃时拦截，否则让事件穿透
+        // 暂停状态下也保留 — 已经在跑的流程（pause 之前启动的）仍允许 Esc 终止
         if type == .keyDown && keyCode == 53 {  // kVK_Escape
             if isFlowActive?() == true, let cb = onCancel {
                 HotkeyManager.log("🛑 Esc 拦截 → 触发取消")
@@ -120,6 +129,9 @@ final class HotkeyManager: @unchecked Sendable {
             }
             return false
         }
+
+        // 全局暂停：所有其他快捷键直接放行，不消费、不触发回调
+        if isPaused { return false }
 
         // 翻译触发键单击检测（仅录音中生效，不消费事件让透传给前台 App）
         if isRecording, let triggerMask = translationTriggerMask {
@@ -158,6 +170,19 @@ final class HotkeyManager: @unchecked Sendable {
             }
             HotkeyManager.log("🌐 翻译快捷键触发")
             let cb = onTranslate
+            DispatchQueue.main.async { cb?() }
+            return true
+        }
+
+        // 重复粘贴上次结果快捷键（单击触发）
+        // 同样在 suppressTranslateHotkey 期间放行，让设置窗口的录制器能捕获
+        if type == .keyDown && !isRecording && repeatLastHotkey.matchesExact(keyCode: keyCode, flags: flags) {
+            if suppressTranslateHotkey {
+                HotkeyManager.log("📋 重复粘贴快捷键匹配但被抑制（设置窗口活跃）")
+                return false
+            }
+            HotkeyManager.log("📋 重复粘贴快捷键触发")
+            let cb = onRepeatLast
             DispatchQueue.main.async { cb?() }
             return true
         }

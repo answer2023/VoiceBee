@@ -84,6 +84,18 @@ struct GeneralSettingsView: View {
                     }
                 }
 
+                // 重复粘贴上次结果
+                SettingsSection(title: "重复粘贴上次结果", description: "误删了上次注入的文本？按此快捷键再贴一次（默认 ⌥⇧V）") {
+                    HStack {
+                        Text("快捷键")
+                            .font(.system(size: 13))
+                        Spacer()
+                        HotkeyRecorderView(hotkey: $appState.repeatLastHotkey) { combo in
+                            NotificationCenter.default.post(name: .repeatLastHotkeyChanged, object: combo)
+                        }
+                    }
+                }
+
                 // 识别语言
                 SettingsSection(title: "识别语言", description: "选择语音识别的目标语言") {
                     Picker("", selection: Binding(

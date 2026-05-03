@@ -141,6 +141,7 @@ struct MenuBarView: View {
     }
 
     private var statusColor: Color {
+        if appState.isPaused { return .gray }
         if appState.isRecording { return .red }
         if appState.isTranslating { return .blue }
         if appState.isProcessing { return .orange }
@@ -148,6 +149,7 @@ struct MenuBarView: View {
     }
 
     private var statusIcon: String {
+        if appState.isPaused { return "pause.fill" }
         if appState.isRecording { return "mic.fill" }
         if appState.isTranslating { return "character.book.closed" }
         if appState.isProcessing { return "waveform" }
@@ -155,6 +157,7 @@ struct MenuBarView: View {
     }
 
     private var statusTitle: String {
+        if appState.isPaused { return "已暂停" }
         if appState.isRecording { return "正在录音…" }
         if appState.isTranslating { return "翻译中…" }
         if appState.isProcessing { return "识别中…" }
@@ -190,4 +193,6 @@ extension Notification.Name {
     static let openHistory = Notification.Name("VoiceJarOpenHistory")
     static let recognitionLanguageChanged = Notification.Name("VoiceJarRecognitionLanguageChanged")
     static let translateHotkeyChanged = Notification.Name("VoiceJarTranslateHotkeyChanged")
+    static let repeatLastHotkeyChanged = Notification.Name("VoiceJarRepeatLastHotkeyChanged")
+    static let pauseStateChanged = Notification.Name("VoiceJarPauseStateChanged")
 }

@@ -7,6 +7,14 @@ import SwiftUI
 class AppState {
     var isRecording = false
     var isProcessing = false
+    /// 暂停状态：所有全局快捷键拦截都禁用（菜单栏可切换）
+    /// 持久化，避免重启后默默拦截快捷键让用户困惑
+    var isPaused: Bool {
+        didSet {
+            UserDefaults.standard.set(isPaused, forKey: "is_paused")
+            NotificationCenter.default.post(name: .pauseStateChanged, object: isPaused)
+        }
+    }
     var rawTranscription = ""
     var polishedText = ""
     var liveText = ""
@@ -85,6 +93,11 @@ class AppState {
         didSet { translateHotkey.saveAsTranslateHotkey() }
     }
 
+    /// "重复粘贴上次结果"快捷键（默认 ⌥⇧V，可改）
+    var repeatLastHotkey: HotkeyCombo {
+        didSet { repeatLastHotkey.saveAsRepeatLastHotkey() }
+    }
+
     /// 翻译目标语言
     var translateTargetLang: TranslateTargetLanguage {
         didSet {
@@ -95,12 +108,14 @@ class AppState {
     init() {
         let hk = HotkeyCombo.load()
         self.hotkey = hk
+        self.isPaused = UserDefaults.standard.bool(forKey: "is_paused")
         self.statusMessage = "按住 \(hk.displayName) 开始说话"
 
         let langCode = UserDefaults.standard.string(forKey: "recognition_language") ?? "zh-Hans"
         self.recognitionLanguage = RecognitionLanguage(rawValue: langCode) ?? .chineseSimplified
 
         self.translateHotkey = HotkeyCombo.loadTranslateHotkey()
+        self.repeatLastHotkey = HotkeyCombo.loadRepeatLastHotkey()
         let targetLang = UserDefaults.standard.string(forKey: "translate_target_lang") ?? "auto"
         self.translateTargetLang = TranslateTargetLanguage(rawValue: targetLang) ?? .auto
 
@@ -283,6 +298,24 @@ struct HotkeyCombo: Equatable {
         }
         let code = defaults.integer(forKey: "translate_hotkey_keyCode")
         let mods = CGEventFlags(rawValue: UInt64(defaults.integer(forKey: "translate_hotkey_modifiers")))
+        return HotkeyCombo(keyCode: code, modifiers: mods)
+    }
+
+    // MARK: - 重复粘贴上次结果快捷键持久化
+
+    func saveAsRepeatLastHotkey() {
+        UserDefaults.standard.set(keyCode, forKey: "repeat_last_hotkey_keyCode")
+        UserDefaults.standard.set(Int(modifiers.rawValue), forKey: "repeat_last_hotkey_modifiers")
+    }
+
+    static func loadRepeatLastHotkey() -> HotkeyCombo {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: "repeat_last_hotkey_keyCode") != nil else {
+            // 默认 ⌥⇧V — kVK_ANSI_V = 9
+            return HotkeyCombo(keyCode: kVK_ANSI_V, modifiers: [.maskAlternate, .maskShift])
+        }
+        let code = defaults.integer(forKey: "repeat_last_hotkey_keyCode")
+        let mods = CGEventFlags(rawValue: UInt64(defaults.integer(forKey: "repeat_last_hotkey_modifiers")))
         return HotkeyCombo(keyCode: code, modifiers: mods)
     }
 }

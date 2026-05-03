@@ -97,8 +97,13 @@ class OverlayWindow {
     }
 
     /// 获取当前输入光标位置，定位浮窗
+    /// 多屏适配：AX 用「含菜单栏屏幕」左上为原点（Y 向下），AppKit 用同一屏幕的左下为原点（Y 向上）
+    /// 翻转 Y 必须用 primary（菜单栏）屏幕的 maxY；clamp 必须用 caret 实际所在的屏幕，否则浮窗会跑到错误显示器
     private func positionNearCaret() {
         guard let window else { return }
+
+        // 菜单栏屏幕（AppKit 全局坐标的锚点屏） — 用于 AX → AppKit Y 翻转
+        let primaryScreen = NSScreen.screens.first(where: { $0.frame.origin == .zero }) ?? NSScreen.main
 
         var caretPoint: NSPoint?
 
@@ -106,7 +111,6 @@ class OverlayWindow {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
         if AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success {
-            // AX API 成功时保证返回正确的 CF 类型
             let axElement = focusedElement as! AXUIElement
             var positionValue: AnyObject?
             if AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFString, &positionValue) == .success {
@@ -119,36 +123,33 @@ class OverlayWindow {
                 ) == .success {
                     let axValue = boundsValue as! AXValue
                     var rect = CGRect.zero
-                    if AXValueGetValue(axValue, .cgRect, &rect) {
-                        // AX 坐标是屏幕坐标（左上角为原点），转换为 AppKit 坐标（左下角为原点）
-                        if let screen = NSScreen.main {
-                            let screenHeight = screen.frame.height
-                            caretPoint = NSPoint(
-                                x: rect.origin.x,
-                                y: screenHeight - rect.origin.y - rect.height - 50 // 在光标下方50pt
-                            )
-                        }
+                    if AXValueGetValue(axValue, .cgRect, &rect), let primary = primaryScreen {
+                        let appKitY = primary.frame.maxY - rect.origin.y - rect.height - 50  // 在光标下方50pt
+                        caretPoint = NSPoint(x: rect.origin.x, y: appKitY)
                     }
                 }
             }
         }
 
-        // fallback: 如果拿不到光标位置，用鼠标位置
+        // fallback: 如果拿不到光标位置，用鼠标位置（NSEvent.mouseLocation 已是 AppKit 全局坐标）
         if caretPoint == nil {
             let mouseLocation = NSEvent.mouseLocation
             caretPoint = NSPoint(x: mouseLocation.x - 20, y: mouseLocation.y - 60)
         }
 
-        if let point = caretPoint {
-            // 确保不超出屏幕
-            if let screen = NSScreen.main {
-                let screenFrame = screen.visibleFrame
-                let x = min(max(point.x, screenFrame.minX + 10), screenFrame.maxX - window.frame.width - 10)
-                let y = min(max(point.y, screenFrame.minY + 10), screenFrame.maxY - window.frame.height - 10)
-                window.setFrameOrigin(NSPoint(x: x, y: y))
-            } else {
-                window.setFrameOrigin(point)
-            }
+        guard let point = caretPoint else { return }
+
+        // 找到 caret 所在的物理屏幕（不再用 NSScreen.main —— 它会在多屏 + 焦点不在主屏时返回错误屏）
+        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(point) })
+            ?? primaryScreen
+
+        if let screen = targetScreen {
+            let frame = screen.visibleFrame
+            let x = min(max(point.x, frame.minX + 10), frame.maxX - window.frame.width - 10)
+            let y = min(max(point.y, frame.minY + 10), frame.maxY - window.frame.height - 10)
+            window.setFrameOrigin(NSPoint(x: x, y: y))
+        } else {
+            window.setFrameOrigin(point)
         }
     }
 

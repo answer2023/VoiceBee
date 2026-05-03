@@ -14,8 +14,6 @@ class VoiceEngine {
 
     private var recordingStartTime: Date?
     private var overlayWindow: OverlayWindow?
-    private var lastInjectedText: String = ""
-    private var lastInjectionTime: Date?
     private var rotationTimer: Timer?
     private var polishTask: Task<Void, Never>?
     private var translateTask: Task<Void, Never>?
@@ -53,6 +51,39 @@ class VoiceEngine {
                 Task { @MainActor in
                     self?.hotkeyManager.translateHotkey = combo
                     self?.log("🌐 翻译快捷键切换: \(combo.displayName)")
+                }
+            }
+        }
+
+        // 监听"重复粘贴上次结果"快捷键变更
+        NotificationCenter.default.addObserver(
+            forName: .repeatLastHotkeyChanged, object: nil, queue: .main
+        ) { [weak self] notification in
+            if let combo = notification.object as? HotkeyCombo {
+                Task { @MainActor in
+                    self?.hotkeyManager.repeatLastHotkey = combo
+                    self?.log("📋 重复粘贴快捷键切换: \(combo.displayName)")
+                }
+            }
+        }
+
+        // 监听暂停状态变更 — 同步到 HotkeyManager
+        // 同时若处于"录音中切换到暂停"，立即取消已在跑的流程
+        hotkeyManager.isPaused = appState.isPaused
+        NotificationCenter.default.addObserver(
+            forName: .pauseStateChanged, object: nil, queue: .main
+        ) { [weak self] notification in
+            if let paused = notification.object as? Bool {
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.hotkeyManager.isPaused = paused
+                    self.log(paused ? "⏸️ 已暂停（菜单栏切换）" : "▶️ 已恢复")
+                    if paused {
+                        self.cancelInFlight()
+                    }
+                    self.appState.statusMessage = paused
+                        ? "已暂停 — 菜单栏点开切回 启用"
+                        : "按住 \(self.appState.hotkey.displayName) 开始说话"
                 }
             }
         }
@@ -95,6 +126,11 @@ class VoiceEngine {
         hotkeyManager.onCancel = { [weak self] in
             Task { @MainActor in
                 self?.cancelInFlight()
+            }
+        }
+        hotkeyManager.onRepeatLast = { [weak self] in
+            Task { @MainActor in
+                self?.repeatLastInjection()
             }
         }
         hotkeyManager.isFlowActive = { [weak self] in
@@ -418,8 +454,6 @@ class VoiceEngine {
             switch appState.inputMode {
             case .universal:
                 TextInjector.inject(rawText)
-                lastInjectedText = rawText
-                lastInjectionTime = Date()
             case .journal:
                 openJournalWithText(rawText)
             }
@@ -518,6 +552,23 @@ class VoiceEngine {
                 self.appState.statusMessage = "按住 \(self.appState.hotkey.displayName) 开始说话"
             }
         }
+    }
+
+    /// 重新粘贴上次注入文本 — 触发时直接 inject TextInjector.lastInjectedText
+    /// 录音/翻译进行中不响应，避免与正在写入的流程互相打架
+    func repeatLastInjection() {
+        guard !appState.isRecording && !appState.isProcessing && !appState.isTranslating else {
+            log("📋 重复粘贴被忽略（流程进行中）")
+            return
+        }
+        let text = TextInjector.lastInjectedText
+        guard !text.isEmpty else {
+            log("📋 重复粘贴：无历史内容")
+            appState.statusMessage = "暂无可重粘贴的内容"
+            return
+        }
+        log("📋 重复粘贴上次结果（\(text.count) 字）")
+        TextInjector.inject(text)
     }
 
     /// 全链路取消（Esc 触发）— 干净地中止任何正在进行的录音 / 识别 / 润色 / 翻译

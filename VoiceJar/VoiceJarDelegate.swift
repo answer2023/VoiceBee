@@ -135,8 +135,9 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .notDetermined {
             log("🎤 请求麦克风权限")
+            // completion handler 在后台线程触发；hop 到 MainActor 才能调 self.log（@MainActor）
             AVCaptureDevice.requestAccess(for: .audio) { granted in
-                self.log("🎤 麦克风权限: \(granted ? "已授权" : "被拒绝")")
+                Task { @MainActor in self.log("🎤 麦克风权限: \(granted ? "已授权" : "被拒绝")") }
             }
         }
 
@@ -145,7 +146,7 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         if speechStatus == .notDetermined {
             log("🗣️ 请求语音识别权限")
             SFSpeechRecognizer.requestAuthorization { status in
-                self.log("🗣️ 语音识别权限: \(status == .authorized ? "已授权" : "状态 \(status.rawValue)")")
+                Task { @MainActor in self.log("🗣️ 语音识别权限: \(status == .authorized ? "已授权" : "状态 \(status.rawValue)")") }
             }
         }
     }
@@ -162,6 +163,19 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
     private func showContextMenu() {
         let menu = NSMenu()
 
+        // 暂停 / 恢复 — 切换全局快捷键拦截
+        let pauseItem = NSMenuItem(
+            title: appState.isPaused ? "恢复（启用快捷键）" : "暂停（停用快捷键）",
+            action: #selector(togglePaused),
+            keyEquivalent: ""
+        )
+        pauseItem.target = self
+        // 暂停时打勾，给用户当前状态的视觉反馈
+        pauseItem.state = appState.isPaused ? .on : .off
+        menu.addItem(pauseItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let historyItem = NSMenuItem(title: "语音历史", action: #selector(openHistory), keyEquivalent: "")
         historyItem.target = self
         historyItem.isEnabled = !appState.history.isEmpty
@@ -176,6 +190,11 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.performClick(nil)
         // Reset menu so left-click doesn't trigger it next time
         statusItem.menu = nil
+    }
+
+    @objc private func togglePaused() {
+        appState.isPaused.toggle()
+        log(appState.isPaused ? "⏸️ 用户暂停" : "▶️ 用户恢复")
     }
 
     private func showOnboarding() {
@@ -246,10 +265,11 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         engine?.suppressTranslateHotkey(true)
     }
 
-    /// 通过 withObservationTracking 监听 isRecording 变化，按需刷新菜单栏图标
+    /// 通过 withObservationTracking 监听 isRecording / isPaused 变化，按需刷新菜单栏图标
     private func startObservingRecordingState() {
         withObservationTracking {
             _ = self.appState.isRecording
+            _ = self.appState.isPaused
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 self?.updateStatusBarIcon()
@@ -260,7 +280,15 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusBarIcon() {
         guard let button = statusItem?.button else { return }
-        let icon = appState.isRecording ? "mic.fill" : "mic"
+        // 暂停优先级最高（用户能一眼看到"我现在不会被监听"）
+        let icon: String
+        if appState.isPaused {
+            icon = "pause.circle"
+        } else if appState.isRecording {
+            icon = "mic.fill"
+        } else {
+            icon = "mic"
+        }
         let image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
         image?.isTemplate = true
         button.image = image

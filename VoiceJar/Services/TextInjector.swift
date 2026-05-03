@@ -4,8 +4,16 @@ import Carbon.HIToolbox
 /// 文本注入服务 — 将文字输入到当前活跃 App 的光标位置
 struct TextInjector {
 
+    /// 上一次成功 inject 的文本，供"重复粘贴上次结果"快捷键复用
+    /// 所有 inject() 调用点都在主线程（VoiceEngine 是 @MainActor、SwiftUI Views 默认 main、HotkeyManager 回调显式 dispatch.main），
+    /// 故用 nonisolated(unsafe) 而不是 @MainActor — 避免把整个静态接口染色成 @MainActor
+    nonisolated(unsafe) private(set) static var lastInjectedText: String = ""
+
     /// 通过模拟剪贴板粘贴注入文本（最可靠的方式）
     static func inject(_ text: String) {
+        // 0. 记录最后一次注入文本（不区分来源：录音 / 翻译 / 历史重粘贴都算）
+        if !text.isEmpty { lastInjectedText = text }
+
         // 1. 保存当前剪贴板内容
         let pasteboard = NSPasteboard.general
         let previousContents = pasteboard.string(forType: .string)
