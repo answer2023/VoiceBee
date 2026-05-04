@@ -153,9 +153,3 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 3. 或在主页/帮助里加 GIF 演示
 
 **不影响**:功能本身正确,只影响新用户上手体验。
-
-### [P3] release.sh: `<enclosure>` 里 `length` 重复
-- **现象**:`SIGNATURE_LINE` 已带 `length=`,模板里又写一次,生成 invalid XML
-- **影响**:Sparkle 实测容忍,但严格 parser 会挂
-- **修法**:`scripts/release.sh` 模板里删掉那行多余的 `length="${SIZE}"`
-- **何时修**:下次发版前 / 或专门一次 housekeeping
