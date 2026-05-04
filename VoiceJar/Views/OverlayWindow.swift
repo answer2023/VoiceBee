@@ -235,15 +235,14 @@ struct OverlayContentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background {
+            .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(.white.opacity(0.2), lineWidth: 0.5)
-                    }
-            }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(.white.opacity(0.2), lineWidth: 0.5)
+            )
         }
     }
 
