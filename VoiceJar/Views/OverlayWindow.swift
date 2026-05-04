@@ -42,8 +42,8 @@ class OverlayWindow {
         contentModel.state = .done
     }
 
-    func setStructured(_ structured: Bool) {
-        contentModel.isStructured = structured
+    func setStyle(_ style: OutputStyle) {
+        contentModel.style = style
     }
 
     func showTranslating() {
@@ -184,7 +184,7 @@ class OverlayContentModel {
     var text: String = "正在聆听…"
     var isPlaceholder: Bool = true
     var state: OverlayState = .recording
-    var isStructured: Bool = false
+    var style: OutputStyle = .raw
     var translateBadge: Bool = false  // 录音中按了触发键 → 蓝色药丸
 
     enum OverlayState {
@@ -248,11 +248,17 @@ struct OverlayContentView: View {
 
     private var dotColor: Color {
         switch model.state {
-        case .recording: return model.isStructured ? .purple : .red
+        case .recording:
+            switch model.style {
+            case .raw: return .red
+            case .light: return .purple
+            case .structured: return .cyan
+            case .formal: return .yellow
+            }
         case .processing: return .orange
         case .done: return .green
-        case .translating: return .blue
-        case .translated: return .cyan
+        case .translating: return .indigo
+        case .translated: return .mint
         }
     }
 }

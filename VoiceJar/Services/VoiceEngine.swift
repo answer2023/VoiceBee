@@ -185,6 +185,7 @@ class VoiceEngine {
 
         // 显示浮窗短暂提示
         if overlayWindow == nil { overlayWindow = OverlayWindow() }
+        overlayWindow?.setStyle(next)
         overlayWindow?.updateText("切换到「\(next.title)」")
         overlayWindow?.show()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -625,7 +626,7 @@ class VoiceEngine {
         if overlayWindow == nil {
             overlayWindow = OverlayWindow()
         }
-        overlayWindow?.setStructured(!appState.outputStyle.defaultStyle.isImmediate)
+        overlayWindow?.setStyle(appState.outputStyle.defaultStyle)
         overlayWindow?.updateText("")
         overlayWindow?.show()
     }
