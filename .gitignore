@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Claude Code 项目配置(本地工具元数据,不进网站分支)
+.claude/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 临时文件
+*.tmp
+*.bak
