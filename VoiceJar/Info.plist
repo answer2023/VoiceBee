@@ -2,33 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundleVersion</key>
-    <string>7</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.2.0</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>VoiceBee 需要访问麦克风来进行语音识别</string>
-    <key>NSSpeechRecognitionUsageDescription</key>
-    <string>VoiceBee 使用语音识别将您的语音转为文字</string>
-    <key>SUFeedURL</key>
-    <string>https://github.com/answer2023/VoiceBee/releases/latest/download/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>9Kamhj8ehbcRIXsfW+2umemdqSuIbeU+0wZm2uNd2M0=</string>
-    <key>SUEnableAutomaticChecks</key>
-    <true/>
-    <key>SUScheduledCheckInterval</key>
-    <integer>86400</integer>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.1</string>
+	<key>CFBundleVersion</key>
+	<string>8</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>VoiceBee 需要访问麦克风来进行语音识别</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>VoiceBee 使用语音识别将您的语音转为文字</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/answer2023/VoiceBee/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9Kamhj8ehbcRIXsfW+2umemdqSuIbeU+0wZm2uNd2M0=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
