@@ -101,3 +101,37 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 2. 查 `~/.claude/hooks/` 目录
 3. 复现问题(故意再跑一次相同命令)
 4. 找到 hook 后决定保留/移除
+
+---
+
+## App 发版相关(优先级 P2,需要清醒精力)
+
+### 本地 app 图标更新构建
+**现状**:JotBee + VoiceBee 在 /Applications/ 里安装的版本仍是旧图标。
+**真因**:本地未用最新 asset 重新构建。
+**修法**:
+1. Xcode 打开项目 → 验证 Assets.xcassets/AppIcon 已更新(蜜蜂 / 金话筒)
+2. Archive → Distribute App → Copy App → 拖到 /Applications/
+3. JotBee 和 VoiceBee 各做一次
+
+**预估**:每个 app 15 分钟。
+
+### JotBee App Store 更新
+**待决定**:本次更新除了换图标,还有什么变更?
+- 如果只换图标 → 价值低,不值得走审核
+- 如果有功能/bug 修复 → 值得发版
+
+**前置确认**:
+1. 列出 1.0 → 1.x 的实际变更(从 git log 或 CHANGELOG 整理)
+2. 评估是否值得发新版本
+3. 决定后才走流程
+
+**流程(决定要发后)**:
+1. 改版本号(Info.plist:CFBundleShortVersionString + CFBundleVersion)
+2. Xcode → Product → Archive
+3. Distribute App → App Store Connect → Upload
+4. App Store Connect 网页 → 创建新版本 → 选 build → 填 What's New → 提交审核
+5. 等审核(24-48 小时)
+6. 审核通过后:自动发布 / 手动选时间
+
+**预估**:首次走完整流程 1-2 小时(不含审核等待)。
