@@ -175,7 +175,7 @@ const Hero = () => /*#__PURE__*/React.createElement("section", {
   className: "btn btn-ghost"
 }, "\u4E86\u89E3\u66F4\u591A")), /*#__PURE__*/React.createElement("div", {
   className: "product-hero-meta"
-}, "v1.1.0 \xB7 macOS 14.0+ \xB7 \u5B8C\u5168\u514D\u8D39")), /*#__PURE__*/React.createElement("div", {
+}, "v1.2.1 \xB7 macOS 14.0+ \xB7 \u5B8C\u5168\u514D\u8D39")), /*#__PURE__*/React.createElement("div", {
   className: "vb-hero-panel"
 }, /*#__PURE__*/React.createElement("div", {
   className: "vb-hero-text"
@@ -306,6 +306,10 @@ const Changelog = () => /*#__PURE__*/React.createElement("section", {
   className: "changelog"
 }, /*#__PURE__*/React.createElement("div", {
   className: "changelog-entry"
+}, /*#__PURE__*/React.createElement("h3", null, "v1.2.1 ", /*#__PURE__*/React.createElement("span", {
+  className: "changelog-date"
+}, "2026.05.04")), /*#__PURE__*/React.createElement("ul", null, /*#__PURE__*/React.createElement("li", null, "\u5F55\u97F3\u6D6E\u7A97\u89C6\u89C9\u7B80\u5316\uFF0C\u53BB\u9664\u591A\u4F59\u9634\u5F71"), /*#__PURE__*/React.createElement("li", null, "4 \u79CD\u8F93\u51FA\u98CE\u683C\u73B0\u5728\u7528 4 \u79CD\u989C\u8272\u533A\u5206"), /*#__PURE__*/React.createElement("li", null, "\u53CC\u51FB Fn \u5207\u6362\u98CE\u683C\u65F6\uFF0C\u63D0\u793A\u6D6E\u7A97\u7684\u989C\u8272\u4E0E\u76EE\u6807\u98CE\u683C\u4E00\u81F4"))), /*#__PURE__*/React.createElement("div", {
+  className: "changelog-entry"
 }, /*#__PURE__*/React.createElement("h3", null, "v1.1.0 ", /*#__PURE__*/React.createElement("span", {
   className: "changelog-date"
 }, "2026.04.14")), /*#__PURE__*/React.createElement("ul", null, /*#__PURE__*/React.createElement("li", null, "\u6DA6\u8272\u6A21\u5F0F\u5168\u9762\u5347\u7EA7 \u2014 \u6D41\u5F0F\u54CD\u5E94\uFF0C\u9996\u5B57 ~0.5 \u79D2\u51FA\u73B0"), /*#__PURE__*/React.createElement("li", null, "\u6D6E\u7A97\u5B9E\u65F6\u663E\u793A AI \u6DA6\u8272\u8FC7\u7A0B"), /*#__PURE__*/React.createElement("li", null, "\u652F\u6301 Ollama / Claude / DeepSeek / Gemini \u5168\u5F15\u64CE\u6D41\u5F0F\u8F93\u51FA"), /*#__PURE__*/React.createElement("li", null, "SSE \u89E3\u6790\u4F18\u5316\uFF0C\u517C\u5BB9\u6240\u6709\u4E3B\u6D41 AI \u534F\u8BAE"))), /*#__PURE__*/React.createElement("div", {
@@ -341,7 +345,7 @@ const CTA = () => /*#__PURE__*/React.createElement("section", {
 }, "\u65E0\u5185\u8D2D\uFF0C\u65E0\u5E7F\u544A\uFF0C\u65E0\u8D26\u53F7\u3002"), /*#__PURE__*/React.createElement("div", {
   className: "cta-buttons"
 }, /*#__PURE__*/React.createElement("a", {
-  href: "./VoiceBee.dmg",
+  href: "https://github.com/answer2023/VoiceBee/releases/download/v1.2.1/VoiceBee-1.2.1.dmg",
   className: "btn btn-primary"
 }, /*#__PURE__*/React.createElement(Icon, {
   name: "download",
