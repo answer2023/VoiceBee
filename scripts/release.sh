@@ -60,13 +60,18 @@ SIGNATURE_LINE=$("$SPARKLE_BIN/sign_update" "$DMG")
 echo "  $SIGNATURE_LINE"
 SIZE=$(stat -f%z "$DMG")
 
-# 6. 输出 appcast item 模板
+# 6. Latest 直链副本(供 jotbee.app 网站下载按钮的永久 URL）— 字节级一致 = EdDSA 签名同样有效
+DMG_LATEST="$BUILD_DIR/${APP_NAME}.dmg"
+cp "$DMG" "$DMG_LATEST"
+echo "▶️ 已生成 latest 副本：$DMG_LATEST"
+
+# 7. 输出 appcast item 模板
 cat <<EOF
 
-✅ 构建完成：$DMG
-✅ 大小：${SIZE} bytes
+✅ 构建完成：$DMG ($SIZE bytes)
+✅ Latest 副本：$DMG_LATEST（字节同上）
 
-将下面这段 <item> 填进 appcast.xml 的 <channel> 里：
+将下面这段 <item> 填进 ~/Developer/VoiceBee-Releases/appcast.xml 的 <channel> 顶部（最新版置顶）：
 
             <item>
                 <title>v${VERSION}</title>
@@ -79,16 +84,25 @@ cat <<EOF
                 <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
                 <enclosure
-                    url="https://github.com/answer2023/VoiceBee/releases/download/v${VERSION}/${APP_NAME}-${VERSION}.dmg"
+                    url="https://github.com/answer2023/VoiceBee-Releases/releases/download/v${VERSION}/${APP_NAME}-${VERSION}.dmg"
                     ${SIGNATURE_LINE}
                     length="${SIZE}"
                     type="application/octet-stream" />
             </item>
 
-发版步骤（手工）：
-1. 把上面 <item> 填进 appcast.xml
-2. git tag v${VERSION} && git push --tags
-3. 在 GitHub Releases 创建 v${VERSION}，上传：
-   - $DMG
-   - appcast.xml （根目录的）
+双仓库发版步骤（手工）：
+1. 在 VoiceBee-Releases 更新 appcast.xml（Sparkle 用）：
+     cd ~/Developer/VoiceBee-Releases
+     # 把上面 <item> 填进 appcast.xml 的 <channel> 顶部
+     git add appcast.xml && git commit -m "v${VERSION} release" && git push origin main
+
+2. 在 VoiceBee 主仓库 commit + 打 tag：
+     cd ~/Developer/VoiceBee
+     git add VoiceJar/Info.plist VoiceJar.xcodeproj
+     git commit -m "release: v${VERSION}"
+     git tag v${VERSION} && git push origin master --tags
+
+3. 在 VoiceBee-Releases 仓库的 GitHub Releases 创建 v${VERSION}，附两个 DMG asset：
+     - $DMG          ← 版本化 DMG，Sparkle appcast 的 enclosure 引用此 URL
+     - $DMG_LATEST   ← Latest 直链 DMG，网站下载按钮 (jotbee.app/voicebee.html) 引用此 URL
 EOF

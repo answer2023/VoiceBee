@@ -51,6 +51,15 @@
 
 代价:CDN 5 分钟缓存。叠加 Sparkle 默认 24 小时轮询(`SUScheduledCheckInterval=86400`),实际延迟由轮询周期主导,不感知。
 
+### 双 DMG asset 策略(Sparkle vs 网站直链)
+
+每次 release 上传**两个** DMG asset(字节级完全一致,SHA256 相同):
+
+- **`VoiceBee-X.Y.Z.dmg`**(版本化)— **Sparkle 引用**:appcast.xml 的 `<enclosure url="...VoiceBee-X.Y.Z.dmg">` 指向此 URL,EdDSA 签名对此文件字节计算
+- **`VoiceBee.dmg`**(无版本名)— **jotbee.app 网站直链**:`releases/latest/download/<filename>` 模式要求文件名跨版本稳定,所以 latest 直链 asset 名永远叫 `VoiceBee.dmg`
+- 两个 DMG 字节一致(`cp` 副本)→ EdDSA 签名对两者等效有效;Sparkle 验签只走版本化 URL,浏览器下 `VoiceBee.dmg` 不验签
+- `release.sh` 已自动化:hdiutil + Sparkle 签名后 `cp "$DMG" "$DMG_LATEST"`(`scripts/release.sh` section 6)
+
 ---
 
 ## 完整发版流程
@@ -75,13 +84,15 @@ APP=build/Build/Products/Release/VoiceBee.app
   "$APP/Contents/Info.plist"
 lipo -info "$APP/Contents/MacOS/VoiceBee"  # 确认 arch
 
-# === 3. 打 DMG 到 VoiceBee-Releases/dist/(.gitignore 已挡 dist/) ===
+# === 3. 打双 DMG 到 VoiceBee-Releases/dist/(.gitignore 已挡 dist/) ===
 VERSION=1.2.3
 DMG=~/Developer/VoiceBee-Releases/dist/VoiceBee-${VERSION}.dmg
+DMG_LATEST=~/Developer/VoiceBee-Releases/dist/VoiceBee.dmg  # 网站直链字节副本
 mkdir -p ~/Developer/VoiceBee-Releases/dist
-rm -f "$DMG"
+rm -f "$DMG" "$DMG_LATEST"
 hdiutil create -volname "VoiceBee ${VERSION}" -srcfolder "$APP" \
   -ov -format UDZO "$DMG"
+cp "$DMG" "$DMG_LATEST"  # latest 直链副本(供 jotbee.app 网站用)
 
 # === 4. Sparkle 签名 ===
 SIGN=~/Library/Developer/Xcode/DerivedData/VoiceJar-*/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update
@@ -107,8 +118,11 @@ git push origin main
 # - Target: main
 # - Title: VoiceBee X.Y.Z
 # - Notes: 同 appcast description 的内容
-# - Attach: 拖 dist/VoiceBee-X.Y.Z.dmg
+# - Attach 两个 DMG asset:
+#     - dist/VoiceBee-X.Y.Z.dmg  ← Sparkle appcast 引用此版本化 URL
+#     - dist/VoiceBee.dmg         ← 网站下载按钮 latest 直链(jotbee.app/voicebee.html)
 # - Publish
+# - 或用 gh CLI 一次上传:gh release create vX.Y.Z dist/VoiceBee-X.Y.Z.dmg dist/VoiceBee.dmg --title "VoiceBee X.Y.Z" --notes "..."
 
 # === 8. 在 VoiceBee 主仓库 commit 版本 bump ===
 cd ~/Developer/VoiceBee
