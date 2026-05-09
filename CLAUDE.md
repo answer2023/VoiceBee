@@ -187,3 +187,18 @@ spctl -a -t open --context context:primary-signature -v <dmg>
 # 找 sign_update
 find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Sparkle/bin*" 2>/dev/null
 ```
+
+---
+
+## 已知 follow-up
+
+### voicebee.tangzhihong.com:301 重定向到 jotbee.app/voicebee.html
+
+- **当前状态**(2026-05-09 部署):Cloudflare Redirect Rule(zone `tangzhihong.com`),`voicebee.tangzhihong.com/*` → `https://jotbee.app/voicebee.html` 301。已 curl 验证四条:直接访问 / 子路径 / 查询参数保留 / redirect chain 终落 200,全通过
+- **背景**:这个子域历史上是 Cloudflare Pages 独立部署的 VoiceBee 产品页。在 ClearSky 工作室主仓库重做时(`tangzhihong.com` 仓库 commit `6294da5`)被边缘化,源码已不在 git 维护,Cloudflare Pages 项目继续提供 stale 快照,且下载链是死链(指向旧 private repo URL `answer2023/VoiceBee/releases/download/v1.2.1/...`,未登录 404)
+- **临时方案**:301 跳到 jotbee.app/voicebee.html,统一入口,SEO 权重也归并过去
+- **未来 follow-up**:
+  - 重建独立产品页(Cloudflare Pages 重新接 git 源)
+  - 或迁回 GitHub Pages,跟 jotbee.app 同部署链路
+  - 决策点:这个独立子域是否值得维护(取决于 SNS / 海报推广策略 — 例如海报上印 `voicebee.tangzhihong.com` 比 `jotbee.app/voicebee.html` 更短更易记)
+
