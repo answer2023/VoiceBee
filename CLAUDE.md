@@ -164,6 +164,19 @@ git tag vX.Y.Z && git push --tags  # 主仓库也打 tag,方便回溯
 | 换了 EdDSA key | 旧版用户拒收新签名,自动更新永久断 | **永远不要换 SUPublicEDKey**;私钥丢了的应急见 Sparkle 文档 |
 | pushed appcast 后 5 分钟内客户端没看到 | raw CDN 缓存 | 等,或客户端"立即检查更新"会绕过(Sparkle 加 cache-buster 参数) |
 
+### git proxy 死端口(`HTTPS_PROXY=` 也覆盖不掉)
+
+**症状**:`git push` 报连 `127.0.0.1:XXXXX` 失败,XXXXX 是 5 位随机端口(如 61965)而非 FlClash 默认 7890;`HTTPS_PROXY=` 也覆盖不掉。
+
+**根因**:IDE / 工具(VS Code / Cursor / Proxyman 等)给 git **global + local 两层都写死**了临时端口。git config 优先级 `local > global > ENV`,所以 ENV 清空也胜不过 git config。
+
+**修复**:四条全 `--unset`(global / local × http / https),清后 fallback 到 ENV(7890)或 TUN。
+```bash
+git config --global --unset http.proxy && git config --global --unset https.proxy
+git -C <repo> config --local --unset http.proxy && git -C <repo> config --local --unset https.proxy
+```
+**实例**:2026-05-09 push commit `13349ec` 时撞到死端口 `61965`。
+
 ---
 
 ## 命令速查
