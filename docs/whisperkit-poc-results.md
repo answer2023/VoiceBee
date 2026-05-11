@@ -250,6 +250,83 @@ done
 
 ---
 
+## E. promptTokens 治根实验(2026-05-11 增补)
+
+### 实验设计
+
+在原 PoC 基础上加 `--compare` 模式:同一份音频跑两轮,baseline(无 prompt)+ with promptTokens,直接对比输出。
+
+### API 调用方式(为 Phase 2 抽象层参考)
+
+```swift
+// 1. WhisperKit 是 lazy init — init() 后必须显式 loadModels() 才能用 tokenizer
+let pipe = try await WhisperKit(config)
+try await pipe.loadModels()  // ← 关键!不调这行,pipe.tokenizer 是 nil
+
+// 2. tokenize prompt
+let raw = pipe.tokenizer!.encode(text: " " + vocabText.trimmingCharacters(in: .whitespaces))
+let promptTokens = raw.filter { $0 < pipe.tokenizer!.specialTokens.specialTokenBegin }
+
+// 3. 注入 DecodingOptions
+var options = DecodingOptions(task: .transcribe, language: "zh", temperature: 0.0)
+options.promptTokens = promptTokens
+let results = try await pipe.transcribe(audioPath: path, decodeOptions: options)
+```
+
+### 实验:3 种 prompt 文本风格 + 4 种阈值组合 = 6+ 次实测
+
+| 实验 | promptText | 阈值 | Pass 2 结果 |
+|---|---|---|---|
+| 1 | `"VoiceBee JotBee ClearSky WhisperKit"` 空格分隔 vocab list | 默认 | ❌ 全部 10/10 空字符串 |
+| 2 | `"用户经常提到这些产品名:VoiceBee、JotBee、ClearSky、WhisperKit。"` 自然语言 | 默认 | ❌ 全部 10/10 空字符串 |
+| 3 | 同 #2 | `compressionRatioThreshold: nil, logProbThreshold: nil, firstTokenLogProbThreshold: nil, noSpeechThreshold: nil`(全禁) | ❌ 仍然全部 10/10 空字符串 |
+
+**Tokenization 本身正常**:
+- `"VoiceBee JotBee ClearSky WhisperKit"` → 13 tokens `[15229, 33, 1653, 508, 310, 33, 1653, 14993, 50, 4133, 41132, 610, 45626]`
+- BPE 拆分:`Voice` (15229) + `B` (33) + `ee` (1653) — Whisper vocabulary 里**确实有** `Voice` / `B` / `ee` 这些 subword,意味着模型理论上能拼出 "VoiceBee"
+
+**推理延迟**:Pass 2 普遍 +0.2~0.3s,说明 prompt context **确实进了 cross-attention**(没被 framework 静默丢弃),只是输出阶段被 filter 掉了
+
+### 结论:promptTokens 用法暴露未知行为
+
+| 问题 | 状态 |
+|---|---|
+| promptTokens 是否治好新造词拼写? | ❌ **未验证** — Pass 2 输出空,无法对比 |
+| API 简洁度(给 Phase 2 抽象用) | ✅ 简单:`tokenizer.encode(text:)` → `[Int]` → `DecodingOptions.promptTokens` |
+| 推理延迟影响 | +0.2~0.3s / 段 |
+| 副作用(纯中文段 #5)是否被影响 | ⚠️ #5 也变空 — 说明影响是**全局性**而非 vocab-specific |
+
+### 失败假设排查
+
+| 假设 | 验证 | 结论 |
+|---|---|---|
+| (a) prompt 是 vocab list 不像自然语言 | 用自然语言 prompt 复测 | ❌ 仍空 |
+| (b) compression/logProb/noSpeech 阈值 trip | 4 个阈值全 nil 复测 | ❌ 仍空 |
+| (c) tokenization 失败 | 输出 13 tokens 正确(BPE 含 `Voice`/`B`/`ee`) | 排除 |
+| (d) promptTokens 没进 cross-attention | 推理延迟 +0.2-0.3s,说明进了 | 排除 |
+| (e) WhisperKit v1.0.0 此功能有 bug / 用法有额外要求 | **待 Phase 2 进一步研究** | 🟡 当前最可能 |
+
+### Phase 2 待研究项(把"promptTokens 治根"留为开放问题)
+
+1. **看 WhisperKit Tests/Examples**:`.build/checkouts/argmax-oss-swift/Tests/` 是否有 promptTokens 实测用例?ArgmaxCLI 跑通 promptTokens 的实际命令是什么?
+2. **试 prefixTokens 替代 promptTokens**:Whisper 有两个 conditioning slot — `<|startofprev|>` 走 promptTokens(prior context),`<|sot|>` 后走 prefixTokens(transcript 起始)。可能用 prefixTokens 行为不同
+3. **试 verbose log**:`config.verbose = true` + `logLevel: .debug` 看模型内部 token sampling 实际选了什么
+4. **试 large-v3-turbo / small / base**:不同模型对 promptTokens 行为可能不同
+5. **试 ArgmaxCLI 命令行**:`swift run argmax-cli transcribe <audio> --prompt "..."` — 如果官方 CLI 也复现空输出,确认是 v1.0.0 bug;如果 CLI 正常,我的代码缺某个 option
+
+### 失败情况下的 fallback(Phase 2 备选方案)
+
+| 方案 | 实现成本 | 鲁棒性 |
+|---|---|---|
+| **A. 后处理映射**(transcript 拿到后,用编辑距离把 `Voizbee` → `VoiceBee`) | 低 | 中 — 假阳性风险(误改正常词) |
+| **B. promptTokens 修通**(继续研究 #4) | 中 — 需深入 WhisperKit | 高 — 治本 |
+| **C. Argmax Pro custom vocabulary**(付费) | 商业成本 | 高 |
+| **D. 不解决专名拼写**(接受 SFSpeech 已经的明显改进) | 0 | 仍优于 SFSpeech 的 "Vocab" 失败 |
+
+**临时推荐:Phase 2 集成主 app 时先按 D 上线**(基础场景已经显著好于 SFSpeech),并行做 #4 研究 promptTokens 正确用法 → 后续启用 vocab 治本。
+
+---
+
 ## 附录:运行环境快照
 
 ```
