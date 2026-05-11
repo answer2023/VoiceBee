@@ -215,23 +215,22 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
   - 或迁回 GitHub Pages,跟 jotbee.app 同部署链路
   - 决策点:这个独立子域是否值得维护(取决于 SNS / 海报推广策略 — 例如海报上印 `voicebee.tangzhihong.com` 比 `jotbee.app/voicebee.html` 更短更易记)
 
-### 专名词典注入失效
+### 专名词典注入失效 ✅ 已诊断(2026-05-11)
 
 **症状**:用户在设置→词典里配了 "VoiceBee" 等专名,2026-05-11 实测 5/5 次仍被 LLM 改成 VB / Vocab / Web / 沃尔 b / Vocab 等。
 
-**当前注入路径**(代码里数组名 `vocabTerms`):`PolishService.assemblePrompt` 把"专有名词参考"段拼到 system prompt **末尾**,段内是用户配的专名列表(VoiceBee / ClearSky / Sparkle / JotBee 等,最多 50 词)。
+**诊断结论**(2026-05-11):
+- ✅ vocab 注入 polish prompt:正常(`PolishService.assemblePrompt` 把"专有名词参考"段拼到 system prompt 末尾,段内是用户配的专名列表 VoiceBee / ClearSky / Sparkle / JotBee 等,最多 50 词)
+- ✅ vocab 注入 ASR contextualStrings:正常(`SpeechRecognizer.swift:85-87` `request.contextualStrings = contextualStringsCache`,`VoiceEngine.swift:293` 调用时传 `appState.vocab.activeTerms`)
+- ❌ **根因**:SFSpeech `zh-Hans` 模型对**英文专名**识别的天花板
+- **实测**:用户说 "VoiceBee" → ASR 直接输出 "Vocab"(在 polish 之前就已经错)
+- **原因**:`contextualStrings` API 只影响 LM bias(语言模型偏好),不是 phoneme 重映射 — 模型从音素到文字的映射主要基于训练分布,对中文模型里夹的英文专名权重低
+- polish 层行为**正确**(符合 v2 prompt "不增加用户没说的"规则 — LLM 拿到的就是 "Vocab",不知道用户原意是 VoiceBee,无从恢复)
 
-**疑点**:
-- 词典段位置太靠后,模型 attention 衰减(虽然 num_ctx 8192 够装下)
-- 或 LLM 把词典当"参考"而非"硬约束"(prompt 文字 "按上下文判断是否替换;不要强行使用")
-- ASR 转录环节就错(在 polish 之前 — Whisper 输出 "Vocab" 给 LLM,LLM 看不出哪里错)
-
-**待诊断顺序**:
-1. 先看 ASR(WhisperKit / SFSpeechRecognizer)转录原文是什么 — 如果 ASR 就输出 "Vocab",那 polish 无能为力(LLM 不知道用户原意是 VoiceBee)
-2. 如果 ASR 输出正确、polish 后才错 → 改进 prompt:
-   - 词典段提到 prompt 前部(globalContract 之后,style prompt 之前)
-   - 用强语气("MUST USE these terms verbatim" 而非"参考")
-   - 加专名识别 few-shot:`input contains "vocab" but vocabulary says "VoiceBee" → output VoiceBee`
+**修复方向**:
+- **治本**:迁移到 WhisperKit。见下文 「WhisperKit 迁移规划」 节
+- **治标**(短期):polish prompt 加专名错例 few-shot(`input contains "vocab" but vocabulary says "VoiceBee" → output VoiceBee`)— 但需要预先收集已知 ASR 错例,维护成本高
+- **治标**(中期):每个英文专名在 vocab 里拆多个变体(`VoiceBee` + `Voice Bee` + `voice bee`)给 contextualStrings 更多 anchor — 但 SFSpeech 上限仍在
 
 ### 重装后 Accessibility 权限需重启 app 才生效
 
@@ -247,4 +246,37 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
 **根治路径(长期 · 治本)**:ad-hoc 签名(`codesign --sign -`)每次 build 签名 hash 不同,macOS TCC 数据库把这判定为"不同的 app",所以替换后权限丢失。**Developer ID 签名(固定证书)+ Apple 公证后,bundle 替换权限自动继承**,Accessibility 不再需要重新授权。
 - 配置 `voicebee-notary` keychain profile + `scripts/release.sh` 走完整公证流程
 - 详见上文「公证(notarization)现状」节 — 这两个 follow-up 同根:都是因为当前未走 Developer ID + 公证链路
+
+---
+
+## WhisperKit 迁移规划(长期 follow-up,进行中)
+
+**动机**:SFSpeech `zh-Hans` 模型对英文专名识别是 VoiceBee 核心瓶颈,影响:
+- vocab 词典实际效果(2026-05-11 实测 5/5 失败,见上文「专名词典注入失效」)
+- 5/3 待办 "识别质量经常自由发挥"
+- 长期产品差异化(VoiceBee 主打"按住说话松开即输入"的全局工具,ASR 准确率是核心 UX)
+
+**WhisperKit 优势**(待 PoC 验证):
+- Apple Silicon 优化(Argmax 开源,Core ML + Metal Performance Shaders)
+- 英文专名准确率远超 SFSpeech
+- 支持 prompt 注入(比 SFSpeech 的 `contextualStrings` 更强 — Whisper 原生 `initial_prompt` 影响首批 token 预测)
+- 多语言混输优秀(Whisper 训练数据本身多语言)
+
+**已知代价**:
+- 模型下载 150 MB(tiny)— 1.5 GB(large-v3)
+- 推理延迟略高(可接受,VoiceBee 本来就有 polish 阶段几百 ms 延迟)
+- Apple Silicon only(VoiceBee 已 arm64-only,不影响)
+- 首次启动需下载模型(增加 onboarding 步骤)
+
+**实施分支**:`feature/whisperkit-asr`
+
+**进度跟踪**:
+- [x] 诊断完成(2026-05-11)
+- [ ] 技术调研 + 设计(进行中,`docs/whisperkit-research.md`)
+- [ ] PoC 集成(SPM + 最小调用 demo)
+- [ ] 抽象层 `ASRProvider` protocol(让 SFSpeech / WhisperKit 可切换)
+- [ ] UI 引擎选择(设置面板加 ASR engine 选项)
+- [ ] 模型下载管理(首次启动引导 / 后台预热 / 切模型 UI)
+- [ ] alpha 测试(双轨并行一段时间收集准确率对比)
+- [ ] 默认开关(默认 WhisperKit / SFSpeech 作 fallback)
 
