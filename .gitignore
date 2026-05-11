@@ -31,3 +31,7 @@ Package.resolved
 
 # Local test builds
 .tmp_test/
+
+# Workspace tooling (third-party IDE / notebook plugins)
+.cabinet
+.cursor-plugin/
