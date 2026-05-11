@@ -6,7 +6,7 @@ actor PolishService {
     /// 在风格 prompt 末尾追加词典提示，让模型按上下文判断是否替换
     /// workingLanguages 注入到 prompt 头部影响多语言混输 / 专名 / 语气判断
     static func assemblePrompt(style: OutputStyle, vocabTerms: [String], workingLanguages: [String] = []) -> String {
-        var sections: [String] = []
+        var sections: [String] = [OutputStyle.globalContract]
         if !workingLanguages.isEmpty {
             let langList = workingLanguages.joined(separator: ", ")
             sections.append("用户的常用工作语言：\(langList)。处理多语言混输时，按上下文判断专名拼写、语气、行文习惯。")
