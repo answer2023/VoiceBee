@@ -108,7 +108,14 @@ actor PolishService {
                 ["role": "system", "content": prompt],
                 ["role": "user", "content": text]
             ],
-            "stream": stream
+            "stream": stream,
+            "options": [
+                "temperature": 0.2,           // 降低创造性,倾向严格 follow prompt
+                "top_p": 0.5,                 // 收敛输出
+                "num_ctx": 8192,              // v2 structured prompt 长,2048 会截断
+                "num_predict": 2048,          // 输出上限,防失控
+                "repeat_penalty": 1.1         // 默认值,显式写出来文档化
+            ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

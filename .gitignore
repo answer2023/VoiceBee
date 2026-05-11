@@ -28,3 +28,6 @@ Package.resolved
 # Secrets
 .env
 *.xcconfig.local
+
+# Local test builds
+.tmp_test/
