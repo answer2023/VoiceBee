@@ -215,3 +215,36 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
   - 或迁回 GitHub Pages,跟 jotbee.app 同部署链路
   - 决策点:这个独立子域是否值得维护(取决于 SNS / 海报推广策略 — 例如海报上印 `voicebee.tangzhihong.com` 比 `jotbee.app/voicebee.html` 更短更易记)
 
+### 专名词典注入失效
+
+**症状**:用户在设置→词典里配了 "VoiceBee" 等专名,2026-05-11 实测 5/5 次仍被 LLM 改成 VB / Vocab / Web / 沃尔 b / Vocab 等。
+
+**当前注入路径**(代码里数组名 `vocabTerms`):`PolishService.assemblePrompt` 把"专有名词参考"段拼到 system prompt **末尾**,段内是用户配的专名列表(VoiceBee / ClearSky / Sparkle / JotBee 等,最多 50 词)。
+
+**疑点**:
+- 词典段位置太靠后,模型 attention 衰减(虽然 num_ctx 8192 够装下)
+- 或 LLM 把词典当"参考"而非"硬约束"(prompt 文字 "按上下文判断是否替换;不要强行使用")
+- ASR 转录环节就错(在 polish 之前 — Whisper 输出 "Vocab" 给 LLM,LLM 看不出哪里错)
+
+**待诊断顺序**:
+1. 先看 ASR(WhisperKit / SFSpeechRecognizer)转录原文是什么 — 如果 ASR 就输出 "Vocab",那 polish 无能为力(LLM 不知道用户原意是 VoiceBee)
+2. 如果 ASR 输出正确、polish 后才错 → 改进 prompt:
+   - 词典段提到 prompt 前部(globalContract 之后,style prompt 之前)
+   - 用强语气("MUST USE these terms verbatim" 而非"参考")
+   - 加专名识别 few-shot:`input contains "vocab" but vocabulary says "VoiceBee" → output VoiceBee`
+
+### 重装后 Accessibility 权限需重启 app 才生效
+
+**症状**:替换 `/Applications/VoiceBee.app`(覆盖 build)后,即使系统设置里 Accessibility 已授权,VoiceBee 仍需 quit + 重新打开才能用 hotkey;否则可能 `dispatch_assert` 崩溃(AXIsProcessTrusted = false → dispatch_assert)。
+
+**原因**:macOS 14+ 安全特性 — bundle 替换后权限数据库(TCC)需同步,新 inode 默认拿不到旧 inode 的授权。Xcode Run 启动调试版也会触发同问题。
+
+**修复方向(短期 · 治标)**:启动时检测 `AXIsProcessTrusted()`,若 false 用 `NSAlert` 弹友好对话框引导:
+- "请退出并重新打开 VoiceBee 让权限生效"
+- 或直接拉起"系统设置 → 隐私与安全性 → 辅助功能"(`x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`)
+- 不要直接 `dispatch_assert` 崩溃 —— 这是标准 macOS UX 反模式
+
+**根治路径(长期 · 治本)**:ad-hoc 签名(`codesign --sign -`)每次 build 签名 hash 不同,macOS TCC 数据库把这判定为"不同的 app",所以替换后权限丢失。**Developer ID 签名(固定证书)+ Apple 公证后,bundle 替换权限自动继承**,Accessibility 不再需要重新授权。
+- 配置 `voicebee-notary` keychain profile + `scripts/release.sh` 走完整公证流程
+- 详见上文「公证(notarization)现状」节 — 这两个 follow-up 同根:都是因为当前未走 Developer ID + 公证链路
+
