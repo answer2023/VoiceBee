@@ -20,26 +20,44 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 
 ---
 
-## D1: API 形态(callback vs async/await vs AsyncStream)
+## D1 (revised 2026-05-12): provider 自管麦克风(pull 模型)
 
-### Options
+> **Status**: revised after Phase 2B spike(见 `docs/whisperkit-streaming-spike.md`)。原 D1 假设的 push 形态(VoiceEngine 持 `AudioRecorder` → provider.appendBuffer)与 WhisperKit 设计哲学冲突,**已 superseded**。
 
-| 选项 | 形态 | 跟 SFSpeech fit | 跟 WhisperKit fit |
-|---|---|---|---|
-| **A. closure callbacks** | `start(onPartial:, onFinal:, onError:)` | 完美 — 现有 SpeechRecognizer 就是这样 | 用 `AudioStreamTranscriber.stateChangeCallback` 桥接 |
-| **B. 纯 async/await** | `for try await event in start()` | 需把 `recognitionTask(with:resultHandler:)` 包成 `AsyncThrowingStream` | WhisperKit `transcribe()` 是 async,但流式接口是 actor + callback |
-| **C. 混合** | lifecycle async(`prepare()` / `startStreaming()` await ready),partial/final 走 closure | 完美 fit SFSpeech | 完美 fit WhisperKit AudioStreamTranscriber |
+### Spike 实测发现(2026-05-12)
 
-### Decision (TBD)
+| 项 | 结果 |
+|---|---|
+| WhisperKit `AudioStreamTranscriber` 流式可行? | ✅ 是 — 实测首个 partial 在 **模型 ready 后 ~12s 出现**,识别准确 |
+| WhisperKit 是 push 还是 pull? | **pull** — `audioProcessor.startRecordingLive(...)` 内部自起 `AVAudioEngine`,无公开 push API |
+| 输出后处理负担 | ⚠️ **需在生产里 strip special tokens**(`<|en|>` / `<|zh|>` / `<|transcribe|>` 等控制符) |
 
-**C. 混合 — lifecycle async,partial/final/error 走 `@MainActor` closure**。
+### Decision (revised)
+
+**provider 全权管自己的音频管线;VoiceEngine 退化为协调者**:
+
+- VoiceEngine 不再持有 `AudioRecorder`,不再传 PCM buffer
+- 每个 `ASRProvider` 实现负责自己的 mic capture + buffer 管理 + 转录 + special-token 清洗
+- VoiceEngine 只调 `start(language:, vocabHint:, onPartial:, onFinal:, onError:)` / `stop()` / `cancel()`,并消费回调
+- partial / final / error 仍走 `@MainActor` closure(原 D1 选项 A 的 callback 形态保留),理由不变 — 高频回调比 AsyncStream 轻
 
 ### Rationale
 
-- VoiceEngine 当前是 `@MainActor`,`recorder.onAudioBuffer` 在主线程 RunLoop 闭包里调 `recognizer.appendBuffer(buffer)`(`VoiceEngine.swift:287-289`)— 这条 hot path 每秒触发数十次。**若 `appendBuffer` 改 async,引入 Task 启停开销不可接受**
-- 部分结果(onPartial)在 SFSpeech 实测每 50-200ms 触发一次,closure 比 `AsyncStream.yield` 更轻
-- WhisperKit `AudioStreamTranscriber.stateChangeCallback` 本身就是 closure(见 PoC research doc),桥接零成本
-- async lifecycle(`prepare()` / `startStreaming()`)给模型加载 / 权限请求留出 await 点,但**不阻塞 hot path**
+- **pull 模型是 WhisperKit 的原生设计** — `AudioStreamTranscriber` 与 `AudioProcessor` 紧耦合(`audioProcessor.audioSamples` 是状态共享面),试图写自定义 `AudioProcessing` conformer 把外部 PCM 灌进去是逆设计,复杂度高且失去内部 VAD + 段确认逻辑
+- **SFSpeech 也能自管 mic** — 现有 `AudioRecorder`(VoiceJar/Services/AudioRecorder.swift)逻辑简单,挪到 `SFSpeechProvider` 内部作为私有组件成本可控;VoiceEngine 不再需要"先起 recorder 再起 recognizer"的两步协调
+- **protocol 更干净** — 删 `appendBuffer` 后 protocol 不依赖 `AVAudioPCMBuffer` / actor 隔离 hack(原 `nonisolated func appendBuffer` 是为对抗 push hot path 的复杂度,pull 模型下消失)
+- **VoiceEngine 简化** — 删 `recorder.onAudioBuffer = { ... }` 桥接、删 `rotationTimer`(本来 D3 就要把它内化到 provider),`startRecording()` 只剩 "调 provider.startStreaming + 显示 overlay"
+- **special-token 清洗** 是 provider 责任(每个引擎的输出格式不同),在 provider 内部把 raw 模型输出过完滤器再发 onPartial/onFinal,避免 VoiceEngine 看到控制符
+
+### 代价
+
+- **SFSpeech 路径需要重构** — 当前 `AudioRecorder + SpeechRecognizer.appendBuffer` 拆分必须合并到 `SFSpeechProvider` 内部。改动是一次性的,无回归风险(新 protocol 落地前可保留旧路径并行跑)
+- **VoiceEngine cancel 路径** — 原来 `recorder.stopRecording()` + `recognizer.cancel()` 两步,改为 `provider.cancel()` 一步;provider 内部协调
+
+### 未变(原 D1 已对的部分)
+
+- partial/final/error 用 closure 而非 AsyncStream — 理由不变(高频回调 + 现有 VoiceEngine `@MainActor` closure 范式一致)
+- 生命周期(`prepare()` / `startStreaming()`)用 async — 给模型下载 / 权限请求留 await 点
 
 ---
 
@@ -64,6 +82,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - 现有 `VoiceEngine.swift:293` 已经传 `appState.vocab.activeTerms`(`[String]`),改动最小
 - Phase 2 PoC 已确认 vocab 字符串**原文**需要保留(post-processor 编辑距离 fuzzy match 的目标),所以 protocol 用 `[String]` 而不是预编码的 `[Int]`
 
+> **D1 revised 兼容性**: vocab hint 在 `startStreaming(...)` 入参里,跟 push/pull 形态无关,**无需改动**。
+
 ---
 
 ## D3: SFSpeech 60s rotation(隐藏 vs 暴露)
@@ -84,6 +104,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - 60s 是 SFSpeech 的**实现细节**(Apple framework 单 session 上限),WhisperKit 无此限制 — VoiceEngine 不该知道
 - 当前 `VoiceEngine.swift:331-337` 起 55s `Timer.scheduledTimer` 调 `recognizer.rotate()` 是 leakage,抽象后该消失
 - 代价:`SFSpeechProvider` 内部增加 timer 状态;但封装泄漏更糟(WhisperKitProvider 需要空实现 `rotate()` 这种 protocol noise)
+
+> **D1 revised 兼容性**: pull 模型下 SFSpeechProvider 已自管 mic + ASR session,rotation timer 仍藏在 provider 内部,**无需改动**。
 
 ---
 
@@ -108,6 +130,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - WhisperKitProvider 的 `prepare()` 包下载 + load + prewarm,内部组合 `ModelDownloader` 作为 implementation detail
 - ModelManager 作为 provider **内部组件**(WhisperKitProvider 持有),不是 cross-provider 跨级实体 — 避免双向依赖
 
+> **D1 revised 兼容性**: 模型管理是 provider 内部生命周期,跟 push/pull 形态无关,**无需改动**。
+
 ---
 
 ## D5: 错误模型(统一 enum vs Swift typed throws)
@@ -131,6 +155,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - `case .underlying(Error)` 兜底任何 provider-specific 错误(WhisperKit 的 CoreML 错 / SFSpeech 的网络错),UI 用 `error.localizedDescription` 即可
 - `noSpeechDetected` 作为 first-class case 让 SFSpeech code 1110 + WhisperKit `noSpeechThreshold` 触发都走同一个忽略路径
 
+> **D1 revised 兼容性**: 错误 enum 跟 push/pull 形态无关,**无需改动**。
+
 ---
 
 ## D6: 引擎切换 cleanup(用户在 Settings 切 ASR engine)
@@ -153,6 +179,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - drain 复杂度高 + 用户期望模糊("我点了切换但还在用旧引擎?")
 - 切换 = 旧 provider 完整 `cancel()` → release → 新 provider lazy init + 后台 `prepare()`
 - Settings UI 实现:`Picker(...).disabled(appState.isRecording || appState.isProcessing)` + 状态文本 "请先停止录音再切换"
+
+> **D1 revised 兼容性**: pull 模型下 provider 自管 mic — `cancel()` 一并停麦克风,VoiceEngine 不需要再单独 stop AudioRecorder。切换策略**无需改动**,实施更简洁。
 
 ---
 
@@ -178,13 +206,18 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - 切换引擎(D6 已规定录音中拒绝)走 destroy-old + prepare-new 流程,UI 显示 "正在切换..."
 - 代价:每次 launch 多 7-10s 后台启动开销 + 后台 menory(模型 ~1.2 GB resident)— 接受,VoiceBee 是长驻菜单栏 app
 
+> **D1 revised 兼容性**: prepare() 仍是 provider 的 async 生命周期方法,pull 模型下额外多一步 — 第一次 `startStreaming` 时同步起 AVAudioEngine(几十 ms),不影响 prewarm 时机决策。**无需改动**。
+
 ---
 
-## ASRProvider Protocol 草案
+## ASRProvider Protocol 草案 (revised 2026-05-12)
+
+> **revised**: 删 `appendBuffer` — provider 自管麦克风(D1 revised),VoiceEngine 退化为协调者。
 
 ```swift
-import AVFoundation
 import Foundation
+// 注:protocol 层不再需要 AVFoundation — buffer 类型不再跨 provider 边界.
+// SFSpeechProvider / WhisperKitProvider 内部各自 import.
 
 // MARK: - Engine identity
 
@@ -215,7 +248,7 @@ enum ASRPrepareEvent {
 
 enum ASRError: LocalizedError {
     case unavailable           // recognizer.isAvailable == false / WhisperKit init 失败
-    case unauthorized          // SFSpeech 用户拒授权
+    case unauthorized          // SFSpeech 用户拒授权 / 麦克风未授权
     case modelMissing          // WhisperKit 模型未下载
     case modelLoadFailed(Error)
     case noSpeechDetected      // 过滤 SFSpeech code 1110 / WhisperKit silence
@@ -224,7 +257,7 @@ enum ASRError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable:        "语音识别服务不可用"
-        case .unauthorized:       "缺少语音识别权限,请在系统设置中授权"
+        case .unauthorized:       "缺少语音识别或麦克风权限,请在系统设置中授权"
         case .modelMissing:       "WhisperKit 模型未下载,请前往设置下载"
         case .modelLoadFailed(let e): "模型加载失败: \(e.localizedDescription)"
         case .noSpeechDetected:   nil  // 上层应忽略,不显示
@@ -237,6 +270,11 @@ enum ASRError: LocalizedError {
 
 /// 流式 ASR 抽象.所有 closure 回调在主 RunLoop 触发,跟现有 `@MainActor` VoiceEngine 兼容.
 /// provider 实现可在内部跳线程,但回调前必须 hop 回 main.
+///
+/// **D1 revised 责任划分**:
+/// - provider 全权管自己的音频管线(麦克风捕获 + buffer 累积 + 转录 + special-token 清洗)
+/// - VoiceEngine 是协调者 — 调 prepare / startStreaming / stop / cancel,消费回调
+/// - VoiceEngine **不再持有 AudioRecorder**,不再传 PCM buffer 给 provider
 @MainActor
 protocol ASRProvider: AnyObject {
 
@@ -254,10 +292,11 @@ protocol ASRProvider: AnyObject {
     /// progress 在主 actor 调用,UI 直接 bind.
     func prepare(progress: @escaping (ASRPrepareEvent) -> Void) async throws
 
-    // MARK: Streaming (D1 + D2 + D3)
+    // MARK: Streaming (D1 revised + D2 + D3)
 
-    /// 开启流式 session.调用前必须 modelStatus == .ready.
+    /// 开启流式 session.provider 内部起麦克风,开始转录.调用前必须 modelStatus == .ready.
     /// - vocabHint: 词典专名,provider 自行决定注入方式(D2)
+    /// - onPartial/onFinal 收到的字符串**已清洗 special tokens**(provider 责任,见 spike doc)
     /// - 60s rotation 等实现细节由 provider 内部处理(D3),caller 不感知
     func startStreaming(
         language: String,
@@ -265,33 +304,37 @@ protocol ASRProvider: AnyObject {
         onPartial: @escaping (String) -> Void,
         onFinal: @escaping (String) -> Void,
         onError: @escaping (ASRError) -> Void
-    )
+    ) async throws
 
-    /// 灌入 PCM buffer.热路径 — 同步,不分配,不跳线程.
-    nonisolated func appendBuffer(_ buffer: AVAudioPCMBuffer)
+    /// 停止流式 session,等最终 segment.调用后 onFinal 可能再 fire 1 次.
+    /// 跟 cancel 的区别:stop 是用户主动结束录音(松开 hotkey),期待最终结果;
+    /// cancel 是 Esc 取消,丢弃 in-flight.
+    func stopStreaming() async
 
-    /// 告知音频结束,等最终 segment.调用后 onFinal 可能再 fire 1 次.
-    func finishStreaming()
-
-    /// 立即取消(Esc).清 callback,丢弃 in-flight 状态.
+    /// 立即取消(Esc).停麦克风,清 callback,丢弃 in-flight 状态.
     func cancel()
 
     /// 当前累计完整文本(已 finalize 段 + 当前 best),供 stopRecordingAndProcess 拿快照.
+    /// special tokens 已清洗.
     var fullTranscript: String { get }
 }
 ```
 
 ---
 
-## SFSpeech Fit(伪代码)
+## SFSpeech Fit(伪代码,D1 revised — provider 自管 mic)
 
 ```swift
+@MainActor
 final class SFSpeechProvider: ASRProvider {
     static let id: ASREngine = .sfSpeech
     var displayName: String { "macOS Speech(内置)" }
 
     private(set) var modelStatus: ASRModelStatus = .notRequired
 
+    // ⚠️ provider 现在自己持有麦克风(D1 revised)— 把 VoiceBee 现 AudioRecorder
+    // 的逻辑挪进来作为私有组件,VoiceEngine 不再持 AudioRecorder.
+    private let audioEngine = AVAudioEngine()
     private var recognizer: SFSpeechRecognizer?
     private var streamingRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -311,13 +354,15 @@ final class SFSpeechProvider: ASRProvider {
     func prepare(progress: @escaping (ASRPrepareEvent) -> Void) async throws {
         let auth = await SFSpeechRecognizer.requestAuthorization()
         guard auth == .authorized else { throw ASRError.unauthorized }
+        // 注:macOS AVAudioEngine 不需要 requestRecordPermission;mic 权限在首次
+        // engine.start() 时由系统弹窗触发.
         progress(.ready)
     }
 
     func startStreaming(language: String, vocabHint: [String],
                         onPartial: @escaping (String) -> Void,
                         onFinal: @escaping (String) -> Void,
-                        onError: @escaping (ASRError) -> Void) {
+                        onError: @escaping (ASRError) -> Void) async throws {
         recognizer = SFSpeechRecognizer(locale: Locale(identifier: language))
             ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         contextualStringsCache = vocabHint
@@ -326,65 +371,45 @@ final class SFSpeechProvider: ASRProvider {
         self.onError = onError
         finalizedSegments = []
         currentBestText = ""
+
+        // 1. 起 ASR session
         startSession()
         // D3: 自动起 rotation timer,不暴露
         rotationTimer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.internalRotate() }
         }
-    }
 
-    private func startSession() {
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = true
-        if !contextualStringsCache.isEmpty {
-            request.contextualStrings = contextualStringsCache
+        // 2. 起麦克风(原 AudioRecorder 内化)— buffer 直接灌到当前 streamingRequest
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            // SFSpeechAudioBufferRecognitionRequest.append 是线程安全
+            self?.streamingRequest?.append(buffer)
         }
-        streamingRequest = request
-        let token = UUID()
-        activeSessionToken = token
-        recognitionTask = recognizer?.recognitionTask(with: request) { [weak self] result, error in
-            guard let self, self.activeSessionToken == token else { return }
-            if let error {
-                // D5: 过滤 noSpeechDetected
-                if (error as NSError).code == 1110 {
-                    self.onError?(.noSpeechDetected)
-                } else {
-                    self.onError?(.underlying(error))
-                }
-                return
-            }
-            guard let result else { return }
-            self.currentBestText = result.bestTranscription.formattedString
-            let combined = self.fullTranscript
-            if result.isFinal { self.onFinal?(combined) } else { self.onPartial?(combined) }
+        do {
+            try audioEngine.start()
+        } catch {
+            onError(.underlying(error))
+            throw ASRError.underlying(error)
         }
     }
 
-    private func internalRotate() {
-        // 现有 SpeechRecognizer.rotate() 逻辑搬过来
-        if !currentBestText.isEmpty { finalizedSegments.append(currentBestText) }
-        currentBestText = ""
-        streamingRequest?.endAudio()
-        recognitionTask?.cancel()
-        streamingRequest = nil; recognitionTask = nil
-        startSession()
-    }
+    private func startSession() { /* ... 现有 SpeechRecognizer.swift:77-109 逻辑搬入,error 路径过 noSpeechDetected 转换 ... */ }
+    private func internalRotate() { /* ... 现有 rotate() 逻辑 ... */ }
 
-    nonisolated func appendBuffer(_ buffer: AVAudioPCMBuffer) {
-        // streamingRequest.append 是线程安全的(Apple 文档),直接调
-        Task { @MainActor in self.streamingRequest?.append(buffer) }
-        // 注:实测此处可能需把 streamingRequest 改成 atomic-like 引用避免每帧 Task 开销.
-        // 设计阶段保留 nonisolated 语义,实现阶段实测延迟决定优化策略.
-    }
-
-    func finishStreaming() {
+    func stopStreaming() async {
+        // 用户松开 hotkey — 停麦克 + 让 ASR finalize 最后一段
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
         rotationTimer?.invalidate(); rotationTimer = nil
         streamingRequest?.endAudio()
+        // 不清 callback;等 SFSpeech 最后一次 isFinal=true 回来再 fire onFinal
     }
 
     func cancel() {
         activeSessionToken = nil
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
         rotationTimer?.invalidate(); rotationTimer = nil
         recognitionTask?.cancel(); recognitionTask = nil
         streamingRequest?.endAudio(); streamingRequest = nil
@@ -401,11 +426,12 @@ final class SFSpeechProvider: ASRProvider {
 
 ---
 
-## WhisperKit Fit(伪代码)
+## WhisperKit Fit(伪代码,D1 revised — pull 模型原生 fit)
 
 ```swift
 import WhisperKit
 
+@MainActor
 final class WhisperKitProvider: ASRProvider {
     static let id: ASREngine = .whisperKit
     var displayName: String { "WhisperKit large-v3" }
@@ -414,12 +440,15 @@ final class WhisperKitProvider: ASRProvider {
 
     private var pipe: WhisperKit?
     private var streamer: AudioStreamTranscriber?
-    private var vocabHintCache: [String] = []          // 原文保留, 给 post-processor
+    private var streamTask: Task<Void, Error>?
+
+    private var vocabHintCache: [String] = []          // 原文保留,给 post-processor
     private var onPartial: ((String) -> Void)?
     private var onFinal: ((String) -> Void)?
     private var onError: ((ASRError) -> Void)?
 
-    // 模型 + 缓存路径 — 不污染 ~/Documents
+    private var confirmedTextAccum: String = ""        // 已确认段累加, fullTranscript 源
+
     private static let modelName = "openai_whisper-large-v3-v20240930_626MB"
     private static var modelFolder: URL {
         let appSupport = try! FileManager.default.url(
@@ -432,7 +461,7 @@ final class WhisperKitProvider: ASRProvider {
         progress(.downloadStarted(sizeBytes: 626_000_000))
         let config = WhisperKitConfig(
             model: Self.modelName,
-            modelFolder: Self.modelFolder.path,       // ⚠️ 关键:重定向到 Application Support
+            modelFolder: Self.modelFolder.path,       // ⚠️ 关键:不污染 ~/Documents
             verbose: false,
             logLevel: .info,
             prewarm: true
@@ -453,67 +482,99 @@ final class WhisperKitProvider: ASRProvider {
     func startStreaming(language: String, vocabHint: [String],
                         onPartial: @escaping (String) -> Void,
                         onFinal: @escaping (String) -> Void,
-                        onError: @escaping (ASRError) -> Void) {
-        guard let pipe, modelStatus == .ready else {
-            onError(.modelMissing); return
+                        onError: @escaping (ASRError) -> Void) async throws {
+        guard let pipe, let tokenizer = pipe.tokenizer, modelStatus == .ready else {
+            onError(.modelMissing); throw ASRError.modelMissing
         }
         vocabHintCache = vocabHint
+        confirmedTextAccum = ""
         self.onPartial = onPartial
         self.onFinal = onFinal
         self.onError = onError
 
-        // promptTokens 当前死胡同 (PoC 已验) — 暂不注入, 留 hook 待后续修通
-        // let promptTokens = try? encodePrompt(vocabHint.joined(separator: " "), pipe.tokenizer)
         let options = DecodingOptions(
             task: .transcribe,
-            language: language.starts(with: "zh") ? "zh" : "en",
+            language: language.hasPrefix("zh") ? "zh" : "en",
             temperature: 0.0,
             detectLanguage: false
-            // promptTokens: promptTokens     // 留 hook
+            // promptTokens 暂留空 — Phase 2 PoC E 节验证为 v1.0.0 死胡同,
+            // 后续靠 post-processor fuzzy match 修拼写
         )
 
-        // AudioStreamTranscriber actor: stateChangeCallback 在每次 state transition 触发
+        // ⚠️ D1 revised 关键:WhisperKit AudioStreamTranscriber 内部自起 AVAudioEngine,
+        // 我们不需要(也不能)从外部 push buffer. 这是 pull 模型的原生 fit.
+        // pipe.audioProcessor 是 WhisperKit 自己的 AudioProcessor 实例.
         streamer = AudioStreamTranscriber(
-            audioProcessor: ...,                       // 桥接现有 AudioRecorder
-            transcriber: pipe,
+            audioEncoder: pipe.audioEncoder,
+            featureExtractor: pipe.featureExtractor,
+            segmentSeeker: pipe.segmentSeeker,
+            textDecoder: pipe.textDecoder,
+            tokenizer: tokenizer,
+            audioProcessor: pipe.audioProcessor,
             decodingOptions: options,
-            stateChangeCallback: { [weak self] _, newState in
-                Task { @MainActor in
+            stateChangeCallback: { [weak self] oldState, newState in
+                // callback 在 actor 内部触发, @Sendable closure, 需 hop 主 actor
+                Task { @MainActor [weak self] in
                     guard let self else { return }
-                    let raw = newState.currentText
-                    if newState.isFinalized {
-                        // 后处理 fuzzy match (vocabHint 在原文形式)
-                        let processed = VocabPostprocessor.apply(raw, vocab: self.vocabHintCache)
+                    // ⚠️ Spike 实测发现: raw 输出含 special tokens (<|en|> / <|zh|> /
+                    // <|transcribe|> 等控制符), 必须 strip 后再发回 caller.
+                    let confirmed = newState.confirmedSegments.map { Self.cleanText($0.text) }.joined(separator: " ")
+                    let unconfirmed = newState.unconfirmedSegments.map { Self.cleanText($0.text) }.joined(separator: " ")
+                    let live = Self.cleanText(newState.currentText)
+
+                    // 已确认段写入累加, 触发 onFinal (每次新段)
+                    if !confirmed.isEmpty, confirmed != self.confirmedTextAccum {
+                        self.confirmedTextAccum = confirmed
+                        let processed = VocabPostprocessor.apply(confirmed, vocab: self.vocabHintCache)
                         self.onFinal?(processed)
-                    } else {
-                        self.onPartial?(raw)
+                    }
+
+                    // 未确认 + currentText 走 partial
+                    let partial = [confirmed, unconfirmed, live].filter { !$0.isEmpty }.joined(separator: " ")
+                    if !partial.isEmpty, partial != "Waiting for speech..." {
+                        self.onPartial?(partial)
                     }
                 }
             }
         )
-        Task { try await streamer?.startStreamTranscription() }
+
+        // startStreamTranscription 阻塞 — 包到 Task, 错误回 onError
+        streamTask = Task { [weak self] in
+            do {
+                try await self?.streamer?.startStreamTranscription()
+            } catch {
+                await MainActor.run { self?.onError?(.underlying(error)) }
+                throw error
+            }
+        }
     }
 
-    nonisolated func appendBuffer(_ buffer: AVAudioPCMBuffer) {
-        // AudioStreamTranscriber.audioProcessor 吃 [Float],需把 PCM buffer 转换
-        // 详细桥接见 implementation 阶段
-        Task { await self.streamer?.audioProcessor?.processAudioBuffer(buffer) }
-    }
-
-    func finishStreaming() {
-        Task { await streamer?.finishStream() }
+    func stopStreaming() async {
+        // 用户松开 hotkey — 告知 transcriber 停, 但让最后一段 finalize
+        await streamer?.stopStreamTranscription()
+        // 不取消 streamTask, 让回调 drain 完最后一帧
     }
 
     func cancel() {
-        Task { await streamer?.stop() }
+        Task { await streamer?.stopStreamTranscription() }
+        streamTask?.cancel()
+        streamTask = nil
         streamer = nil
+        confirmedTextAccum = ""
         onPartial = nil; onFinal = nil; onError = nil
     }
 
-    var fullTranscript: String {
-        // AudioStreamTranscriber 内部维护已 finalize 段, 暴露 currentText snapshot
-        // (implementation 阶段确认其内部 API)
-        return ""  // placeholder
+    var fullTranscript: String { confirmedTextAccum }
+
+    /// 清洗 WhisperKit 输出里的 special token 控制符 (spike 实测发现).
+    /// 例: "<|zh|><|transcribe|><|0.00|>今天 VoiceBee<|2.50|>" → "今天 VoiceBee"
+    private static func cleanText(_ raw: String) -> String {
+        // 匹配 <|...|> 形式的控制符全部移除. 实现阶段用 NSRegularExpression 或现成 lib.
+        return raw.replacingOccurrences(
+            of: #"<\|[^|]+\|>"#,
+            with: "",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 ```
@@ -538,6 +599,8 @@ final class WhisperKitProvider: ASRProvider {
 ## 待持续研究的开放问题
 
 - **WhisperKit promptTokens 用法** — Phase 2 留作 spike,5 条具体方向见 `docs/whisperkit-poc-results.md` E 节
-- **AudioStreamTranscriber 实际 API surface** — PoC 未实测流式接口,本设计基于 research doc 的间接资料,实施阶段需对照源码确认 stateChangeCallback / audioProcessor 真实形态
 - **VocabPostprocessor 算法选型** — 编辑距离 / Aho-Corasick / 拼音模糊匹配,留待 promptTokens 修通前的过渡方案
-- **`appendBuffer` 跨 actor 性能** — `nonisolated` + `Task { @MainActor }` 每秒数十次的开销实测,可能需 lock-free queue
+- **AudioStreamTranscriber 实际 API surface** — ✅ Phase 2B spike 已实测,源码定位 + 签名 + ArgmaxCLI 参考模式见 `docs/whisperkit-streaming-spike.md`
+- **special-token 清洗实现** — Spike 实测发现 WhisperKit 输出含 `<|en|>` / `<|zh|>` / `<|transcribe|>` 等控制符,WhisperKitProvider 用 regex `<\|[^|]+\|>` 移除是临时方案,实施阶段需对照 WhisperKit 内部 tokenizer 行为确认是否漏边界
+- **首次 partial ~12s** (Spike 实测) — 比 SFSpeech 慢明显,可能受 large-v3 模型 + VAD `requiredSegmentsForConfirmation=2` 影响,实施阶段需试 `large-v3-turbo` / 调 `silenceThreshold` / 调 `requiredSegmentsForConfirmation` 平衡延迟与稳定性
+- **VoiceEngine 改造范围** — D1 revised 后 VoiceEngine 不再持 AudioRecorder,但仍需保留:overlay 显示 / polish 调度 / 翻译分流;改造时确认现有 `recorder.onAudioBuffer` 和 `rotationTimer` 干净移除,不留死代码

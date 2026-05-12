@@ -18,5 +18,13 @@ let package = Package(
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ]
         ),
+        // Phase 2B spike: real-time streaming via AudioStreamTranscriber.
+        // See docs/whisperkit-streaming-spike.md.
+        .executableTarget(
+            name: "WhisperKitStreamSpike",
+            dependencies: [
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
+            ]
+        ),
     ]
 )
