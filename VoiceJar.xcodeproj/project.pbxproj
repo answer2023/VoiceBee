@@ -15,11 +15,13 @@
 		21DBB26955C9CA4896583AAF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A6CBDC9154F0C282A50EA5 /* SettingsView.swift */; };
 		29C54E25CB41C1E7CDAEA340 /* Stats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDFF44A2924C1A2DC7756A3 /* Stats.swift */; };
 		2BCD370C82EEABC72D62A02B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4A9D49138AD6947FD5400F /* OnboardingView.swift */; };
+		4206E7A4AEC928B9976E8136 /* WhisperKitProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1F9A821313116017E4A3911 /* WhisperKitProvider.swift */; };
 		465DC0573A6C6AA38EAD44EB /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53835F397390E0D6B9A8B771 /* MenuBarView.swift */; };
 		5B39FB446B0A0AE3789AB59F /* VoiceJarDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F4BA7D75D434C5991D666E /* VoiceJarDelegate.swift */; };
 		67605A5216488751028EB410 /* OverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7523F1DB058A806D58B4E6F6 /* OverlayWindow.swift */; };
 		7446AAEAAAD0F122963BCA8A /* TranslationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F22B9ED9193D2CB6508B334 /* TranslationSettings.swift */; };
 		785011F0552D949D7017BD87 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 36D51B3E1A5C8B387942CAAC /* Assets.xcassets */; };
+		80BB8D58BA114CD68F2B59B9 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4058165AE4AF5C7BECBF8FFC /* WhisperKit */; };
 		8C8EAA22927940FA8717899D /* VoiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979833D372BF04538435722C /* VoiceEngine.swift */; };
 		9916F9C9349AB52004816D70 /* HomeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B82EAAF805EC74E25D62A1C /* HomeSettingsView.swift */; };
 		9DC4AE135EA36E2A7651082C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 3012A96B12DA69FBB828A20C /* Sparkle */; };
@@ -68,6 +70,7 @@
 		D60D99E9AD6144D635CD689F /* ASRProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRProvider.swift; sourceTree = "<group>"; };
 		D686914509979FCA97858EBE /* HotkeyRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyRecorderView.swift; sourceTree = "<group>"; };
 		D8E9576E0681B1934291A92A /* PolishService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolishService.swift; sourceTree = "<group>"; };
+		E1F9A821313116017E4A3911 /* WhisperKitProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +79,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9DC4AE135EA36E2A7651082C /* Sparkle in Frameworks */,
+				80BB8D58BA114CD68F2B59B9 /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +113,7 @@
 				4FE65B73AB361898CED8EA36 /* TextInjector.swift */,
 				4431C8EF958DB7AA0ED60BE4 /* UpdaterManager.swift */,
 				979833D372BF04538435722C /* VoiceEngine.swift */,
+				E1F9A821313116017E4A3911 /* WhisperKitProvider.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -176,6 +181,7 @@
 			name = VoiceJar;
 			packageProductDependencies = (
 				3012A96B12DA69FBB828A20C /* Sparkle */,
+				4058165AE4AF5C7BECBF8FFC /* WhisperKit */,
 			);
 			productName = VoiceJar;
 			productReference = 6C9CED9867C9CAEECDF8A7FB /* VoiceJar.app */;
@@ -203,6 +209,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				EC1CADB3FE2EB9B81C088CC6 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				44D9DAF7F42B6CD8DF6DAB27 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AEEFB3619BF263E89688C63F /* Products */;
@@ -256,6 +263,7 @@
 				AC91346142531C0AC606F7F7 /* VocabSettingsView.swift in Sources */,
 				8C8EAA22927940FA8717899D /* VoiceEngine.swift in Sources */,
 				5B39FB446B0A0AE3789AB59F /* VoiceJarDelegate.swift in Sources */,
+				4206E7A4AEC928B9976E8136 /* WhisperKitProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -435,6 +443,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		44D9DAF7F42B6CD8DF6DAB27 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
 		EC1CADB3FE2EB9B81C088CC6 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -450,6 +466,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EC1CADB3FE2EB9B81C088CC6 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		4058165AE4AF5C7BECBF8FFC /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 44D9DAF7F42B6CD8DF6DAB27 /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
+			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
