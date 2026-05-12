@@ -5,8 +5,11 @@ import Foundation
 @MainActor
 @Observable
 class VoiceEngine {
-    private let recorder = AudioRecorder()
-    private let recognizer = SpeechRecognizer()
+    /// Phase 2E-a: ASR 抽象层接入 — 默认 SFSpeechProvider,行为对齐原 SpeechRecognizer
+    /// 旧 SpeechRecognizer.swift / AudioRecorder.swift 暂保留,Phase 2E-b 清理.
+    /// 60s rotation 已隐藏在 SFSpeechProvider 内部(D3),VoiceEngine 不再持有 rotationTimer.
+    private let asrProvider: any ASRProvider = SFSpeechProvider()
+
     private let hotkeyManager = HotkeyManager()
     private let polishService = PolishService()
 
@@ -14,12 +17,9 @@ class VoiceEngine {
 
     private var recordingStartTime: Date?
     private var overlayWindow: OverlayWindow?
-    private var rotationTimer: Timer?
+    private var streamingTask: Task<Void, Never>?
     private var polishTask: Task<Void, Never>?
     private var translateTask: Task<Void, Never>?
-
-    /// SFSpeech 单次会话上限约 60s，55s 触发轮换留余量
-    private let sessionRotationInterval: TimeInterval = 55
 
     private func log(_ msg: String) {
         VJLog.log(msg, prefix: "Engine")
@@ -28,14 +28,19 @@ class VoiceEngine {
     init(appState: AppState) {
         self.appState = appState
         hotkeyManager.hotkey = appState.hotkey
-        recognizer.setLanguage(appState.recognitionLanguage.rawValue)
-        log("初始化，快捷键: \(appState.hotkey.displayName)，语言: \(appState.recognitionLanguage.displayName)")
+        log("初始化，快捷键: \(appState.hotkey.displayName)，语言: \(appState.recognitionLanguage.displayName)，ASR: \(type(of: asrProvider).id.rawValue)")
         setupHotkey()
+
+        // 注:Phase 2E-a 不在 init 调 provider.prepare() —
+        // SFSpeech 不需要显式预热(权限由 VoiceJarDelegate.requestPermissions 在 launch 时统一请求),
+        // 且 init Task 跟 VoiceJarDelegate 并发调 SFSpeechRecognizer.requestAuthorization 会触发
+        // Thread 3 _dispatch_assert_queue_fail crash(Apple TCC 状态机对并发 auth 调用不稳定).
+        // Phase 2F WhisperKit 接入时,在 Onboarding / Settings 流程内显式调 prepare.
 
         // 监听快捷键变更
         NotificationCenter.default.addObserver(
             forName: .hotkeyChanged, object: nil, queue: .main
-        ) { [weak self] notification in
+        ) { @Sendable [weak self] notification in
             if let combo = notification.object as? HotkeyCombo {
                 Task { @MainActor in
                     self?.updateHotkey(combo)
@@ -46,7 +51,7 @@ class VoiceEngine {
         // 监听翻译快捷键变更
         NotificationCenter.default.addObserver(
             forName: .translateHotkeyChanged, object: nil, queue: .main
-        ) { [weak self] notification in
+        ) { @Sendable [weak self] notification in
             if let combo = notification.object as? HotkeyCombo {
                 Task { @MainActor in
                     self?.hotkeyManager.translateHotkey = combo
@@ -58,7 +63,7 @@ class VoiceEngine {
         // 监听"重复粘贴上次结果"快捷键变更
         NotificationCenter.default.addObserver(
             forName: .repeatLastHotkeyChanged, object: nil, queue: .main
-        ) { [weak self] notification in
+        ) { @Sendable [weak self] notification in
             if let combo = notification.object as? HotkeyCombo {
                 Task { @MainActor in
                     self?.hotkeyManager.repeatLastHotkey = combo
@@ -72,7 +77,7 @@ class VoiceEngine {
         hotkeyManager.isPaused = appState.isPaused
         NotificationCenter.default.addObserver(
             forName: .pauseStateChanged, object: nil, queue: .main
-        ) { [weak self] notification in
+        ) { @Sendable [weak self] notification in
             if let paused = notification.object as? Bool {
                 Task { @MainActor in
                     guard let self else { return }
@@ -88,14 +93,14 @@ class VoiceEngine {
             }
         }
 
-        // 监听语言变更
+        // 监听语言变更 — ASRProvider 协议下 language 是每次 startStreaming 传参,
+        // 此处仅 log;下次按 hotkey 录音时自动用 appState.recognitionLanguage.rawValue
         NotificationCenter.default.addObserver(
             forName: .recognitionLanguageChanged, object: nil, queue: .main
-        ) { [weak self] notification in
+        ) { @Sendable [weak self] notification in
             if let lang = notification.object as? RecognitionLanguage {
                 Task { @MainActor in
-                    self?.recognizer.setLanguage(lang.rawValue)
-                    self?.log("🌐 语言切换: \(lang.displayName)")
+                    self?.log("🌐 语言切换: \(lang.displayName)(下次录音生效)")
                 }
             }
         }
@@ -283,64 +288,74 @@ class VoiceEngine {
         hotkeyManager.translateMarked = false
         refreshTranslationTrigger()
 
-        // 设置流式识别的音频回调
-        recorder.onAudioBuffer = { [weak self] buffer in
-            self?.recognizer.appendBuffer(buffer)
-        }
+        // Phase 2E-a:通过 ASRProvider 启动流式识别(provider 自管 mic + 60s rotation)
+        let language = appState.recognitionLanguage.rawValue
+        let vocab = appState.vocab.activeTerms
 
-        // 启动流式识别（注入词典作为 contextualStrings）
-        recognizer.startStreaming(
-            contextualStrings: appState.vocab.activeTerms,
-            onPartialResult: { [weak self] text in
-                DispatchQueue.main.async {
-                    self?.appState.liveText = text
-                    self?.overlayWindow?.updateText(text)
-                }
-            },
-            onFinalResult: { [weak self] text in
-                DispatchQueue.main.async {
-                    self?.appState.liveText = text
-                    self?.appState.rawTranscription = text
-                    self?.overlayWindow?.updateText(text)
-                    self?.log("✅ 最终识别结果: \(text)")
-                }
-            },
-            onError: { [weak self] error in
-                DispatchQueue.main.async {
-                    self?.log("❌ 流式识别错误: \(error)")
-                    // No speech detected 不算错误，用户可能还没开始说
-                    if (error as NSError).code != 1110 {
-                        self?.appState.errorMessage = "识别错误: \(error.localizedDescription)"
+        // 乐观 set 状态:startStreaming 几 ms 内通常返回;失败时 Task catch 内回滚
+        recordingStartTime = Date()
+        appState.isRecording = true
+        appState.statusMessage = "正在录音…"
+        showOverlay()
+
+        let provider = asrProvider
+        streamingTask = Task { @MainActor [weak self] in
+            do {
+                try await provider.startStreaming(
+                    language: language,
+                    vocabHint: vocab,
+                    onPartial: { [weak self] text in
+                        // protocol @MainActor 已保证主线程,无需 DispatchQueue.main.async
+                        self?.appState.liveText = text
+                        self?.overlayWindow?.updateText(text)
+                    },
+                    onFinal: { [weak self] text in
+                        self?.appState.liveText = text
+                        self?.appState.rawTranscription = text
+                        self?.overlayWindow?.updateText(text)
+                        self?.log("✅ 最终识别结果: \(text)")
+                    },
+                    onError: { [weak self] error in
+                        self?.handleASRError(error)
                     }
-                }
+                )
+                self?.log("✅ 流式录音已启动")
+            } catch let asrError as ASRError {
+                self?.log("❌ 流式录音启动失败: \(asrError)")
+                self?.handleASRError(asrError)
+                self?.appState.isRecording = false
+                self?.hideOverlay()
+            } catch {
+                self?.log("❌ 流式录音启动失败(非 ASRError): \(error)")
+                self?.appState.errorMessage = "录音启动失败: \(error.localizedDescription)"
+                self?.appState.isRecording = false
+                self?.hideOverlay()
             }
-        )
+        }
+    }
 
-        // 启动录音
-        do {
-            try recorder.startRecording()
-            recordingStartTime = Date()
-            appState.isRecording = true
-            appState.statusMessage = "正在录音…"
-
-            // 显示浮窗
-            showOverlay()
-
-            // 启动会话轮换 timer：每 55s 切一次新 ASR session 绕开 60s 限制
-            rotationTimer?.invalidate()
-            rotationTimer = Timer.scheduledTimer(withTimeInterval: sessionRotationInterval, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self, self.appState.isRecording else { return }
-                    self.log("🔄 ASR 会话轮换（避免 60s 上限）")
-                    self.recognizer.rotate()
-                }
-            }
-
-            log("✅ 流式录音已启动")
-        } catch {
-            log("❌ 录音启动失败: \(error)")
-            appState.errorMessage = "录音启动失败: \(error.localizedDescription)"
-            recognizer.cancel()
+    /// 统一处理 ASRError — ASRError enum 替代旧 NSError code 1110 判断(E5)
+    @MainActor
+    private func handleASRError(_ error: ASRError) {
+        switch error {
+        case .noSpeechDetected:
+            // 等价旧 code == 1110:用户可能还没开始说,不报错
+            log("🔇 未检测到语音")
+        case .unauthorized:
+            appState.errorMessage = "缺少语音识别或麦克风权限,请在系统设置中授权"
+            log("⚠️ ASR 权限不足")
+        case .unavailable:
+            appState.errorMessage = "语音识别服务不可用"
+            log("⚠️ ASR 不可用")
+        case .modelMissing:
+            appState.errorMessage = "ASR 模型未就绪"
+            log("⚠️ 模型缺失")
+        case .modelLoadFailed(let e):
+            appState.errorMessage = "模型加载失败: \(e.localizedDescription)"
+            log("❌ 模型加载失败: \(e)")
+        case .underlying(let e):
+            appState.errorMessage = "识别错误: \(e.localizedDescription)"
+            log("❌ 识别错误: \(e)")
         }
     }
 
@@ -350,14 +365,10 @@ class VoiceEngine {
         let duration = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         log("⏹️ 停止录音，时长: \(String(format: "%.1f", duration))秒")
 
-        // 停止录音 + 轮换 timer
-        rotationTimer?.invalidate()
-        rotationTimer = nil
-        let _ = recorder.stopRecording()
-        recorder.onAudioBuffer = nil
-
-        // 告知识别器没有更多音频
-        recognizer.finishStreaming()
+        // E3 决策 A:fire-and-forget stop,不 await — 主路径立即读 appState.liveText(由
+        // onPartial 持续累积到最后一刻)走 polish;onFinal 后续到达也只是覆盖 liveText
+        let provider = asrProvider
+        Task { await provider.stopStreaming() }
 
         appState.isRecording = false
 
@@ -579,14 +590,10 @@ class VoiceEngine {
         }
         log("🛑 Esc 取消全链路")
 
-        // 1. 录音 + ASR
-        rotationTimer?.invalidate()
-        rotationTimer = nil
-        if appState.isRecording {
-            _ = recorder.stopRecording()
-            recorder.onAudioBuffer = nil
-        }
-        recognizer.cancel()
+        // 1. 录音 + ASR — provider 内部处理 60s rotation + mic 停起,VoiceEngine 不感知
+        asrProvider.cancel()
+        streamingTask?.cancel()
+        streamingTask = nil
 
         // HotkeyManager 内部 isRecording 必须同步关掉 — 否则用户松开 Fn 时
         // 第二次触发 onRecordStop，进 stopRecordingAndProcess 撞 guard 静默 return，

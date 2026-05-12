@@ -135,9 +135,13 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if micStatus == .notDetermined {
             log("🎤 请求麦克风权限")
-            // completion handler 在后台线程触发；hop 到 MainActor 才能调 self.log（@MainActor）
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                Task { @MainActor in self.log("🎤 麦克风权限: \(granted ? "已授权" : "被拒绝")") }
+            // ⚠️ Xcode 26.5 Swift runtime crash 根因:closure 定义在 @MainActor class 方法内
+            // 时,Swift 6 把 closure 整体推断为 @MainActor isolated(跟 body 内容无关,跟定义位置
+            // 有关).TCC/SFSpeech 从 background queue invoke 时,closure 进入瞬间撞
+            // _dispatch_assert_queue_fail,body 代码根本没机会跑.
+            // 修复:`@Sendable` 显式标注打破 isolation 继承,closure 变成 nonisolated.
+            AVCaptureDevice.requestAccess(for: .audio) { @Sendable granted in
+                VJLog.log("🎤 麦克风权限: \(granted ? "已授权" : "被拒绝")", prefix: "App")
             }
         }
 
@@ -145,8 +149,8 @@ class VoiceJarDelegate: NSObject, NSApplicationDelegate {
         let speechStatus = SFSpeechRecognizer.authorizationStatus()
         if speechStatus == .notDetermined {
             log("🗣️ 请求语音识别权限")
-            SFSpeechRecognizer.requestAuthorization { status in
-                Task { @MainActor in self.log("🗣️ 语音识别权限: \(status == .authorized ? "已授权" : "状态 \(status.rawValue)")") }
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                VJLog.log("🗣️ 语音识别权限: \(status == .authorized ? "已授权" : "状态 \(status.rawValue)")", prefix: "App")
             }
         }
     }

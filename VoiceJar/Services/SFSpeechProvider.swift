@@ -6,6 +6,17 @@ import Speech
 /// provider 内部(D1 revised:provider 自管 mic),VoiceEngine 退化为协调者.
 ///
 /// 设计源:`docs/asr-provider-design.md` "SFSpeech Fit" 节
+/// audio thread 跟主 actor 共享 streamingRequest 的 box.
+///
+/// 历史教训(2026-05-13 Thread 7 crash):原方案用 `nonisolated(unsafe) var
+/// streamingRequest` 让 installTap closure 直接 `self?.streamingRequest?.append`,
+/// 编译通过但 runtime 撞 `_dispatch_assert_queue_fail` — Swift 6 对 @MainActor class
+/// 的 `var` 访问即使标 nonisolated(unsafe) 仍可能插入 main-queue assertion.
+/// 修复:用独立 @unchecked Sendable box,audio thread closure 仅捕获 box,完全不经 self.
+private final class StreamingRequestBox: @unchecked Sendable {
+    var request: SFSpeechAudioBufferRecognitionRequest?
+}
+
 @MainActor
 final class SFSpeechProvider: ASRProvider {
 
@@ -20,10 +31,13 @@ final class SFSpeechProvider: ASRProvider {
 
     // MARK: - ASR session state
 
-    /// SFSpeechAudioBufferRecognitionRequest.append(_:) 在 Apple 文档明确为线程安全,
-    /// 因此用 `nonisolated(unsafe)` 让 audio thread 的 installTap closure 直接写入,
-    /// 避免每帧 hop 主 actor 的 Task 启停开销(P4 决策).
-    nonisolated(unsafe) private var streamingRequest: SFSpeechAudioBufferRecognitionRequest?
+    /// 主 actor 持有的当前 streaming request 引用(逻辑状态用)
+    private var streamingRequest: SFSpeechAudioBufferRecognitionRequest?
+
+    /// audio thread 跟主 actor 之间的 request 桥 — installTap closure 只捕获此 box,
+    /// 不引用 self,消除 @MainActor class 在 audio thread 上被访问触发的 dispatch assert.
+    /// SFSpeechAudioBufferRecognitionRequest.append(_:) 本身线程安全(Apple 文档).
+    private let requestBox = StreamingRequestBox()
 
     private var recognizer: SFSpeechRecognizer?
     private var recognitionTask: SFSpeechRecognitionTask?
@@ -91,18 +105,22 @@ final class SFSpeechProvider: ASRProvider {
         startSession()
 
         // 4. D3:rotation timer 隐藏在 provider 内部
-        rotationTimer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { [weak self] _ in
+        // @Sendable 打破 @MainActor 继承(timer fire 时 RunLoop callback 不保证在 main isolation context)
+        rotationTimer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { @Sendable [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.internalRotate()
             }
         }
 
-        // 5. 起麦克风 + tap(P4:installTap closure 在 audio thread,通过 nonisolated(unsafe)
-        //    streamingRequest 直接 append,无 actor hop 开销)
+        // 5. 起麦克风 + tap — closure 仅捕获 requestBox(@unchecked Sendable),
+        //    不通过 self,彻底避开 @MainActor class 跨线程访问的 dispatch assertion
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.streamingRequest?.append(buffer)
+        let box = requestBox
+        // ⚠️ @Sendable 显式打破 isolation 继承:installTap closure 定义在 @MainActor 方法内,
+        // 默认会继承 @MainActor isolation,audio thread invoke 时 runtime 撞 dispatch_assert.
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { @Sendable buffer, _ in
+            box.request?.append(buffer)
         }
         audioEngine.prepare()
         do {
@@ -113,6 +131,7 @@ final class SFSpeechProvider: ASRProvider {
             recognitionTask?.cancel()
             recognitionTask = nil
             streamingRequest = nil
+            requestBox.request = nil
             rotationTimer?.invalidate()
             rotationTimer = nil
             throw ASRError.underlying(error)
@@ -128,6 +147,7 @@ final class SFSpeechProvider: ASRProvider {
         rotationTimer?.invalidate()
         rotationTimer = nil
         streamingRequest?.endAudio()
+        requestBox.request = nil  // 切断 audio thread 进一步 append(tap 已 remove,防御性)
         // 不清 callback / 不清 finalizedSegments — onFinal 最后一次可能仍要 fire
     }
 
@@ -144,6 +164,7 @@ final class SFSpeechProvider: ASRProvider {
         recognitionTask = nil
         streamingRequest?.endAudio()
         streamingRequest = nil
+        requestBox.request = nil
         finalizedSegments = []
         currentBestText = ""
         onPartial = nil
@@ -167,11 +188,13 @@ final class SFSpeechProvider: ASRProvider {
             request.contextualStrings = contextualStringsCache
         }
         streamingRequest = request
+        requestBox.request = request  // 同步桥 — audio thread 通过 box 拿当前 request
 
         let token = UUID()
         activeSessionToken = token
 
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        // @Sendable 显式:SFSpeech callback 在 internal queue invoke,closure 不能继承 @MainActor
+        recognitionTask = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
             // SFSpeech callback 在 internal queue,跨 actor 时只发 Sendable primitives
             // (String / Bool / UUID / NSError),ASRError 在主 actor 内部再构造
             if let error {
@@ -226,6 +249,7 @@ final class SFSpeechProvider: ASRProvider {
         streamingRequest?.endAudio()
         recognitionTask?.cancel()
         streamingRequest = nil
+        requestBox.request = nil  // 防御:audio thread 看到 nil 时 noop;startSession 会立即重设
         recognitionTask = nil
         // 立即开新 session 接管 audio tap 的后续 buffer
         startSession()
@@ -235,7 +259,8 @@ final class SFSpeechProvider: ASRProvider {
 
     private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
+            // @Sendable 显式:TCC callback 在 internal queue,closure 不能继承 @MainActor
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
                 continuation.resume(returning: status)
             }
         }
