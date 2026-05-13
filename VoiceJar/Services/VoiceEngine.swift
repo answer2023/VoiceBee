@@ -5,9 +5,8 @@ import Foundation
 @MainActor
 @Observable
 class VoiceEngine {
-    /// Phase 2E-a: ASR 抽象层接入 — 默认 SFSpeechProvider,行为对齐原 SpeechRecognizer
-    /// 旧 SpeechRecognizer.swift / AudioRecorder.swift 暂保留,Phase 2E-b 清理.
-    /// 60s rotation 已隐藏在 SFSpeechProvider 内部(D3),VoiceEngine 不再持有 rotationTimer.
+    /// ASR provider — 60s rotation 等实现细节隐藏在 provider 内部(D3),
+    /// provider 自管麦克风(D1 revised),VoiceEngine 是协调者不持 mic/timer.
     private let asrProvider: any ASRProvider = SFSpeechProvider()
 
     private let hotkeyManager = HotkeyManager()

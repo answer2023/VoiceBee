@@ -73,7 +73,14 @@ struct OnboardingView: View {
                         isGranted: speechGranted,
                         action: {
                             Task {
-                                let status = await SpeechRecognizer.requestAuthorization()
+                                // R1 inline (Phase 2E-b): 旧 SpeechRecognizer.requestAuthorization 已删,
+                                // 直接调 Apple API. @Sendable 打破 @MainActor 继承,避免 TCC callback
+                                // 在 background queue invoke 时撞 _dispatch_assert_queue_fail.
+                                let status = await withCheckedContinuation { (continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
+                                    SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                                        continuation.resume(returning: status)
+                                    }
+                                }
                                 await MainActor.run { speechGranted = (status == .authorized) }
                             }
                         }
