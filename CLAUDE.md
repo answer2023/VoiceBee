@@ -177,6 +177,15 @@ git -C <repo> config --local --unset http.proxy && git -C <repo> config --local 
 ```
 **实例**:2026-05-09 push commit `13349ec` 时撞到死端口 `61965`。
 
+### Swift 6 / Xcode 26.5 @Sendable 教训 (2026-05-12)
+
+- 任何传给 Apple framework / GCD / NotificationCenter / Timer / 第三方 SDK 的 closure literal,必须显式标 `@Sendable`
+- 原因:`@MainActor class` 方法内定义的 closure 默认继承 `@MainActor` isolation,framework 从 background thread invoke 时 runtime 撞 `_dispatch_assert_queue_fail`
+- `@Sendable` 显式标注 = isolation override,让 closure 变 nonisolated
+- 写法:`{ @Sendable [weak self] params in ... }`(`@Sendable` 在 capture list 前)
+- 编译期不报错 ≠ runtime 安全,`nonisolated(unsafe)` 也不保证消除 runtime assertion
+- 适用场景:`installTap` / `recognitionTask` / `requestAuthorization` / `requestAccess` / `Timer.scheduledTimer` / `NotificationCenter.addObserver` 等所有 framework callback
+
 ---
 
 ## 命令速查
