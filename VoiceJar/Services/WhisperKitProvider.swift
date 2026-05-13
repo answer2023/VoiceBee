@@ -39,13 +39,40 @@ final class WhisperKitProvider: ASRProvider {
     // MARK: - 模型配置
 
     private static let modelName = "openai_whisper-large-v3-v20240930_626MB"
+    private static let modelRepo = "argmaxinc/whisperkit-coreml"
 
-    /// 生产模型路径 — Application Support,**不污染** `~/Documents/huggingface/`(spike doc 已警告)
-    private static var modelFolder: URL {
+    /// 模型下载基目录 — Application Support,**不污染** `~/Documents/huggingface/`(spike doc 已警告).
+    /// WhisperKit 下载时会在此目录下创建 `argmaxinc/whisperkit-coreml/<modelName>/` 子结构
+    /// (HubApiWrapper 镜像 HuggingFace 仓库布局).
+    private static var modelDownloadBase: URL {
         let appSupport = try! FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true)
         return appSupport.appendingPathComponent("VoiceBee/models")
+    }
+
+    /// 完整模型目录 — downloadBase + HF 镜像子路径.用于 1) 检测完整性  2) modelFolder 直接 load.
+    /// 下载完成后此路径下应有 MelSpectrogram / AudioEncoder / TextDecoder 三个 .mlmodelc(或 .mlpackage).
+    private static var fullModelFolder: URL {
+        modelDownloadBase
+            .appendingPathComponent(modelRepo, isDirectory: true)
+            .appendingPathComponent(modelName, isDirectory: true)
+    }
+
+    /// 检测模型是否已完整就位(三个核心 mlmodelc 文件都存在,任一种格式即可).
+    /// 对齐 WhisperKit.swift:371-375 的 detect 逻辑(ModelUtilities.detectModelURL 支持 mlmodelc / mlpackage).
+    private static func isModelComplete() -> Bool {
+        let folder = fullModelFolder
+        let names = ["MelSpectrogram", "AudioEncoder", "TextDecoder"]
+        let fm = FileManager.default
+        for name in names {
+            let mlmodelc = folder.appendingPathComponent("\(name).mlmodelc")
+            let mlpackage = folder.appendingPathComponent("\(name).mlpackage")
+            if !fm.fileExists(atPath: mlmodelc.path) && !fm.fileExists(atPath: mlpackage.path) {
+                return false
+            }
+        }
+        return true
     }
 
     // MARK: - ASRProvider
@@ -57,17 +84,37 @@ final class WhisperKitProvider: ASRProvider {
     }
 
     func prepare(progress: @Sendable @escaping (ASRPrepareEvent) -> Void) async throws {
-        // W9:WhisperKit 内部下载无公开 progress hook,只发 downloadStarted + loading + ready
-        progress(.downloadStarted(sizeBytes: 626_000_000))
-        modelStatus = .downloading(progress: 0)
-
-        let config = WhisperKitConfig(
-            model: Self.modelName,
-            modelFolder: Self.modelFolder.path,
-            verbose: false,
-            logLevel: .info,
-            prewarm: true
-        )
+        // 双模式策略(2026-05-13 fix):
+        //   - 模型已就位(包括手动复制)→ 用 modelFolder 直接 load,不走 HF Hub
+        //   - 模型缺失/不完整 → 用 downloadBase 触发自动下载
+        //   modelFolder / downloadBase 在 WhisperKit.swift:313-351 是互斥语义,
+        //   二选一不能同时传(同时传则 modelFolder 优先,download 分支永不进).
+        let isComplete = Self.isModelComplete()
+        let config: WhisperKitConfig
+        if isComplete {
+            // Fast path:本地已有完整模型(下载过 / 手动复制)— 直接 load,跳过 download 事件
+            // do block 内的 progress(.loading) 会作为首个事件 fire
+            config = WhisperKitConfig(
+                model: Self.modelName,
+                modelFolder: Self.fullModelFolder.path,
+                verbose: false,
+                logLevel: .info,
+                prewarm: true
+            )
+        } else {
+            // Download path:WhisperKit 走 HF Hub 拉模型到 downloadBase/argmaxinc/whisperkit-coreml/<model>/
+            // W9:WhisperKit 内部下载无公开 progress hook,只发 downloadStarted + loading + ready
+            progress(.downloadStarted(sizeBytes: 626_000_000))
+            modelStatus = .downloading(progress: 0)
+            config = WhisperKitConfig(
+                model: Self.modelName,
+                downloadBase: Self.modelDownloadBase,
+                verbose: false,
+                logLevel: .info,
+                prewarm: true
+                // download: true 是 init 默认值
+            )
+        }
 
         do {
             // W8:不预检模型存在性,WhisperKit 内部处理 missing → 自动下载

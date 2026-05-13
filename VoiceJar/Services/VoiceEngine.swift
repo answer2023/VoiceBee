@@ -7,7 +7,8 @@ import Foundation
 class VoiceEngine {
     /// ASR provider — 60s rotation 等实现细节隐藏在 provider 内部(D3),
     /// provider 自管麦克风(D1 revised),VoiceEngine 是协调者不持 mic/timer.
-    private let asrProvider: any ASRProvider = SFSpeechProvider()
+    /// Phase 2F:var,根据 appState.asrEngine 实例化 + 切换时 swap.
+    private var asrProvider: any ASRProvider
 
     private let hotkeyManager = HotkeyManager()
     private let polishService = PolishService()
@@ -26,15 +27,12 @@ class VoiceEngine {
 
     init(appState: AppState) {
         self.appState = appState
+        // Phase 2F:根据 appState.asrEngine 实例化(F3 — VoiceEngine init 内调度 prepare)
+        // makeProvider 是实例方法,继承 @MainActor 从 class
+        self.asrProvider = Self.makeProvider(for: appState.asrEngine)
         hotkeyManager.hotkey = appState.hotkey
         log("初始化，快捷键: \(appState.hotkey.displayName)，语言: \(appState.recognitionLanguage.displayName)，ASR: \(type(of: asrProvider).id.rawValue)")
         setupHotkey()
-
-        // 注:Phase 2E-a 不在 init 调 provider.prepare() —
-        // SFSpeech 不需要显式预热(权限由 VoiceJarDelegate.requestPermissions 在 launch 时统一请求),
-        // 且 init Task 跟 VoiceJarDelegate 并发调 SFSpeechRecognizer.requestAuthorization 会触发
-        // Thread 3 _dispatch_assert_queue_fail crash(Apple TCC 状态机对并发 auth 调用不稳定).
-        // Phase 2F WhisperKit 接入时,在 Onboarding / Settings 流程内显式调 prepare.
 
         // 监听快捷键变更
         NotificationCenter.default.addObserver(
@@ -103,6 +101,21 @@ class VoiceEngine {
                 }
             }
         }
+
+        // Phase 2F: 监听 ASR 引擎切换
+        NotificationCenter.default.addObserver(
+            forName: .asrEngineChanged, object: nil, queue: .main
+        ) { @Sendable [weak self] notification in
+            if let engine = notification.object as? ASREngine {
+                Task { @MainActor in
+                    self?.swapProvider(to: engine)
+                }
+            }
+        }
+
+        // F3: app launch 后台预热当前 engine.100ms 延迟保险:给 VoiceJarDelegate.requestPermissions
+        // 的 TCC callback 一个落地窗口,消除两个 TCC 请求精确同帧 race(Phase 2E-a Thread 3 教训)
+        schedulePrepare(for: asrProvider)
     }
 
     /// 设置全局快捷键回调
@@ -624,6 +637,93 @@ class VoiceEngine {
             appState.history = Array(appState.history.prefix(50))
         }
         appState.stats.record(chars: polishedText.count, seconds: duration)
+    }
+
+    // MARK: - ASR Provider 管理(Phase 2F)
+
+    /// 工厂方法 — 根据 engine 枚举值实例化对应 provider.
+    /// 注:静态方法显式 @MainActor 因为 SFSpeech/WhisperKit Provider 都是 @MainActor class,
+    /// init 期间 self 尚未就绪,必须用 static 路径调用.
+    @MainActor
+    private static func makeProvider(for engine: ASREngine) -> any ASRProvider {
+        switch engine {
+        case .sfSpeech: return SFSpeechProvider()
+        case .whisperKit: return WhisperKitProvider()
+        }
+    }
+
+    /// F8: cancel 旧 provider + 创建新 + 后台 prepare.
+    /// F7 兜底:录音/处理中拒绝切换(UI 已 disable,defense-in-depth)
+    private func swapProvider(to newEngine: ASREngine) {
+        if appState.isRecording || appState.isProcessing || appState.isTranslating {
+            log("⚠️ ASR 切换被拦截:正在录音/处理中(UI 应 disable 此入口)")
+            return
+        }
+        let oldEngineID = type(of: asrProvider).id
+        if oldEngineID == newEngine {
+            log("⏭️ ASR 切换:目标与当前相同(\(newEngine.rawValue)),忽略")
+            return
+        }
+        log("🔄 ASR 切换: \(oldEngineID.rawValue) → \(newEngine.rawValue)")
+        asrProvider.cancel()
+        asrProvider = Self.makeProvider(for: newEngine)
+        appState.asrModelStatusMessage = "正在准备 \(asrProvider.displayName)..."
+        schedulePrepare(for: asrProvider)
+    }
+
+    /// 调度后台 prepare — 100ms 启动延迟保险 + 错误回退到 sfSpeech(F6)
+    private func schedulePrepare(for provider: any ASRProvider) {
+        let providerID = type(of: provider).id
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)  // F3 保险
+            guard let self else { return }
+            self.log("⏳ 开始 prepare: \(providerID.rawValue)")
+            do {
+                try await provider.prepare { @Sendable [weak self] event in
+                    // progress callback 是 @Sendable,不能直接访 @MainActor self
+                    Task { @MainActor [weak self] in
+                        self?.handlePrepareEvent(event, providerID: providerID)
+                    }
+                }
+            } catch let asrError as ASRError {
+                self.log("❌ prepare 失败: \(asrError)")
+                self.handlePrepareFailure(asrError, attemptedEngine: providerID)
+            } catch {
+                self.log("❌ prepare 未知错误: \(error)")
+                self.handlePrepareFailure(.underlying(error), attemptedEngine: providerID)
+            }
+        }
+    }
+
+    /// 处理 prepare 进度事件 — 防御:provider 已切换则丢弃过期事件
+    private func handlePrepareEvent(_ event: ASRPrepareEvent, providerID: ASREngine) {
+        guard providerID == type(of: asrProvider).id else {
+            log("🔇 丢弃过期 prepare 事件(provider 已切换): \(providerID.rawValue)")
+            return
+        }
+        switch event {
+        case .downloadStarted(let bytes):
+            let mb = bytes / 1_000_000
+            appState.asrModelStatusMessage = "下载模型中(~\(mb) MB,首次约需几分钟)..."
+        case .downloadProgress(let frac):
+            appState.asrModelStatusMessage = "下载进度: \(Int(frac * 100))%"
+        case .loading:
+            appState.asrModelStatusMessage = "加载模型中..."
+        case .ready:
+            appState.asrModelStatusMessage = "\(asrProvider.displayName) 已就绪"
+            log("✅ ASR 已就绪: \(providerID.rawValue)")
+        }
+    }
+
+    /// F6: prepare 失败回滚到 sfSpeech.防御:用户期间又切了别的 engine 则不动
+    private func handlePrepareFailure(_ error: ASRError, attemptedEngine: ASREngine) {
+        appState.asrModelStatusMessage = "引擎准备失败: \(error.localizedDescription ?? "未知错误")"
+        // 只在 1) 失败的不是 sfSpeech 本身 + 2) 用户当前仍指向失败引擎 时才回滚
+        if attemptedEngine != .sfSpeech, appState.asrEngine == attemptedEngine {
+            appState.errorMessage = "ASR 引擎准备失败,已自动回退到内置 macOS Speech"
+            log("⏮️ 回滚 asrEngine → sfSpeech")
+            appState.asrEngine = .sfSpeech  // didSet → Notification → swapProvider → 重新 prepare
+        }
     }
 
     // MARK: - 浮窗

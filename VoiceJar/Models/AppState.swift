@@ -80,6 +80,17 @@ class AppState {
         }
     }
 
+    /// ASR 引擎(SFSpeech / WhisperKit)— Phase 2F 引入
+    var asrEngine: ASREngine {
+        didSet {
+            UserDefaults.standard.set(asrEngine.rawValue, forKey: "asr_engine")
+            NotificationCenter.default.post(name: .asrEngineChanged, object: asrEngine)
+        }
+    }
+
+    /// ASR 模型状态文字 — VoiceEngine 写,SettingsView 读.不持久化(仅 runtime UI 反馈)
+    var asrModelStatusMessage: String = ""
+
     /// 当前快捷键配置
     var hotkey: HotkeyCombo {
         didSet {
@@ -113,6 +124,9 @@ class AppState {
 
         let langCode = UserDefaults.standard.string(forKey: "recognition_language") ?? "zh-Hans"
         self.recognitionLanguage = RecognitionLanguage(rawValue: langCode) ?? .chineseSimplified
+
+        let engineCode = UserDefaults.standard.string(forKey: "asr_engine") ?? ASREngine.sfSpeech.rawValue
+        self.asrEngine = ASREngine(rawValue: engineCode) ?? .sfSpeech
 
         self.translateHotkey = HotkeyCombo.loadTranslateHotkey()
         self.repeatLastHotkey = HotkeyCombo.loadRepeatLastHotkey()

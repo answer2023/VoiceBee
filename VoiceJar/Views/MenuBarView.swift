@@ -195,4 +195,5 @@ extension Notification.Name {
     static let translateHotkeyChanged = Notification.Name("VoiceJarTranslateHotkeyChanged")
     static let repeatLastHotkeyChanged = Notification.Name("VoiceJarRepeatLastHotkeyChanged")
     static let pauseStateChanged = Notification.Name("VoiceJarPauseStateChanged")
+    static let asrEngineChanged = Notification.Name("VoiceJarASREngineChanged")
 }

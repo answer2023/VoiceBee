@@ -64,6 +64,9 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     @Bindable var appState: AppState
     @State private var diagnosticReport: String?
+    // Phase 2F: WhisperKit 切换前的 Alert state
+    @State private var showWhisperKitAlert = false
+    @State private var pendingEngine: ASREngine?
 
     var body: some View {
         ScrollView {
@@ -94,6 +97,55 @@ struct GeneralSettingsView: View {
                             NotificationCenter.default.post(name: .repeatLastHotkeyChanged, object: combo)
                         }
                     }
+                }
+
+                // Phase 2F: 语音识别引擎
+                SettingsSection(title: "语音识别引擎", description: "选择语音转文字的引擎.WhisperKit 准确率更高但首次需下载模型(~626 MB)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("", selection: Binding(
+                            get: { appState.asrEngine },
+                            set: { newEngine in
+                                // F5: 切换到 WhisperKit 前 Alert 确认
+                                if newEngine == .whisperKit && appState.asrEngine != .whisperKit {
+                                    pendingEngine = newEngine
+                                    showWhisperKitAlert = true
+                                } else {
+                                    appState.asrEngine = newEngine
+                                }
+                            }
+                        )) {
+                            Text("macOS Speech(内置)").tag(ASREngine.sfSpeech)
+                            Text("WhisperKit large-v3").tag(ASREngine.whisperKit)
+                        }
+                        .pickerStyle(.radioGroup)
+                        .labelsHidden()
+                        // F7: 录音/处理中 disable
+                        .disabled(appState.isRecording || appState.isProcessing || appState.isTranslating)
+
+                        if !appState.asrModelStatusMessage.isEmpty {
+                            Text(appState.asrModelStatusMessage)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        if appState.isRecording || appState.isProcessing || appState.isTranslating {
+                            Text("⚠️ 录音/处理中,无法切换引擎")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                .alert("切换到 WhisperKit?", isPresented: $showWhisperKitAlert) {
+                    Button("取消", role: .cancel) {
+                        pendingEngine = nil
+                    }
+                    Button("切换") {
+                        if let pending = pendingEngine {
+                            appState.asrEngine = pending
+                        }
+                        pendingEngine = nil
+                    }
+                } message: {
+                    Text("首次切换需下载 ~626 MB 模型(几分钟,取决于网速).下载完成前 WhisperKit 不可用,SFSpeech 仍可用.")
                 }
 
                 // 识别语言
