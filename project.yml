@@ -36,3 +36,28 @@ targets:
         CODE_SIGN_ENTITLEMENTS: VoiceJar/VoiceJar.entitlements
         ENABLE_HARDENED_RUNTIME: false
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+
+  VoiceJarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - VoiceJarTests
+    dependencies:
+      - target: VoiceJar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.clearsky.VoiceJarTests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/VoiceBee.app/Contents/MacOS/VoiceBee
+
+schemes:
+  VoiceJar:
+    build:
+      targets:
+        VoiceJar: all
+        VoiceJarTests: [test]
+    test:
+      targets:
+        - VoiceJarTests
+      gatherCoverageData: false

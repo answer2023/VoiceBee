@@ -10,7 +10,10 @@ struct VoiceJarMain {
         try? Data("MAIN ENTRY\n".utf8).write(to: url)
 
         // 单实例锁：若已有 VoiceBee 在运行，激活旧实例并退出
-        if let existing = Self.findExistingInstance() {
+        // 测试环境下短路 — 否则 xcodebuild test 启动 host app 撞上系统已运行实例就 exit(0),
+        // test runner 看到 host 早退报 "Early unexpected exit"(Phase 3-A 加测试时撞过)
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !isRunningTests, let existing = Self.findExistingInstance() {
             existing.activate()
             exit(0)
         }
