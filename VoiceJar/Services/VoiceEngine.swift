@@ -38,7 +38,7 @@ class VoiceEngine {
         NotificationCenter.default.addObserver(
             forName: .hotkeyChanged, object: nil, queue: .main
         ) { @Sendable [weak self] notification in
-            if let combo = notification.object as? HotkeyCombo {
+            if let combo = notification.object as? Hotkey {
                 Task { @MainActor in
                     self?.updateHotkey(combo)
                 }
@@ -49,7 +49,7 @@ class VoiceEngine {
         NotificationCenter.default.addObserver(
             forName: .translateHotkeyChanged, object: nil, queue: .main
         ) { @Sendable [weak self] notification in
-            if let combo = notification.object as? HotkeyCombo {
+            if let combo = notification.object as? Hotkey {
                 Task { @MainActor in
                     self?.hotkeyManager.translateHotkey = combo
                     self?.log("🌐 翻译快捷键切换: \(combo.displayName)")
@@ -61,7 +61,7 @@ class VoiceEngine {
         NotificationCenter.default.addObserver(
             forName: .repeatLastHotkeyChanged, object: nil, queue: .main
         ) { @Sendable [weak self] notification in
-            if let combo = notification.object as? HotkeyCombo {
+            if let combo = notification.object as? Hotkey {
                 Task { @MainActor in
                     self?.hotkeyManager.repeatLastHotkey = combo
                     self?.log("📋 重复粘贴快捷键切换: \(combo.displayName)")
@@ -130,6 +130,15 @@ class VoiceEngine {
                 self?.stopRecordingAndProcess()
             }
         }
+        // F3=B: Toggle 模式 30 分钟硬超时反馈
+        hotkeyManager.onToggleTimeout = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.log("⚠️ Toggle 录音 30 分钟超时,自动停止 + 走 polish")
+                self.appState.statusMessage = "⚠️ 单击切换录音超 30 分钟,已自动停止"
+                self.stopRecordingAndProcess()
+            }
+        }
         hotkeyManager.onDoubleTap = { [weak self] in
             Task { @MainActor in
                 self?.togglePolishMode()
@@ -184,7 +193,7 @@ class VoiceEngine {
     }
 
     /// 更新快捷键绑定
-    func updateHotkey(_ combo: HotkeyCombo) {
+    func updateHotkey(_ combo: Hotkey) {
         hotkeyManager.rebind(to: combo)
     }
 

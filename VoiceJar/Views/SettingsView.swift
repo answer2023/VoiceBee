@@ -67,6 +67,12 @@ struct GeneralSettingsView: View {
     // Phase 2F: WhisperKit 切换前的 Alert state
     @State private var showWhisperKitAlert = false
     @State private var pendingEngine: ASREngine?
+    // Phase 3-B: 系统冲突 Alert state
+    @State private var pendingHotkey: Hotkey?
+    @State private var pendingHotkeySlot: HotkeyPendingSlot?
+    @State private var pendingConflictLabel: String = ""
+
+    enum HotkeyPendingSlot { case main, repeatLast }
 
     var body: some View {
         ScrollView {
@@ -75,26 +81,46 @@ struct GeneralSettingsView: View {
                 Text("通用")
                     .font(.system(size: 20, weight: .semibold))
 
-                // 快捷键
-                SettingsSection(title: "快捷键", description: "按住快捷键说话，松开自动识别并输入") {
-                    HStack {
-                        Text("按住说话")
-                            .font(.system(size: 13))
-                        Spacer()
-                        HotkeyRecorderView(hotkey: $appState.hotkey) { combo in
-                            NotificationCenter.default.post(name: .hotkeyChanged, object: combo)
+                // 录音快捷键(Phase 3-B:加 hold/toggle mode)
+                SettingsSection(title: "录音快捷键", description: "支持单 modifier(Fn / 左右 ⌘⌥⇧⌃)或组合键;按住说话或单击切换均可") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("快捷键")
+                                .font(.system(size: 13))
+                            Spacer()
+                            HotkeyRecorderView(hotkey: appState.hotkey, acceptsModifierOnly: true) { candidate in
+                                handleHotkeyCommit(candidate: candidate, slot: .main)
+                            }
+                        }
+                        HStack {
+                            Text("触发方式")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Picker("", selection: Binding(
+                                get: { appState.hotkey.mode },
+                                set: { newMode in
+                                    appState.hotkey = appState.hotkey.with(mode: newMode)
+                                    NotificationCenter.default.post(name: .hotkeyChanged, object: appState.hotkey)
+                                }
+                            )) {
+                                Text(HotkeyMode.hold.displayName).tag(HotkeyMode.hold)
+                                Text(HotkeyMode.toggle.displayName).tag(HotkeyMode.toggle)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 200)
+                            .labelsHidden()
                         }
                     }
                 }
 
-                // 重复粘贴上次结果
-                SettingsSection(title: "重复粘贴上次结果", description: "误删了上次注入的文本？按此快捷键再贴一次（默认 ⌥⇧V）") {
+                // 重复粘贴上次结果(强制 .hold,F2=C — 不显示 mode picker)
+                SettingsSection(title: "重复粘贴上次结果", description: "误删了上次注入的文本?按此快捷键再贴一次(默认 ⌥⇧V)") {
                     HStack {
                         Text("快捷键")
                             .font(.system(size: 13))
                         Spacer()
-                        HotkeyRecorderView(hotkey: $appState.repeatLastHotkey) { combo in
-                            NotificationCenter.default.post(name: .repeatLastHotkeyChanged, object: combo)
+                        HotkeyRecorderView(hotkey: appState.repeatLastHotkey, acceptsModifierOnly: false) { candidate in
+                            handleHotkeyCommit(candidate: candidate, slot: .repeatLast)
                         }
                     }
                 }
@@ -225,6 +251,69 @@ struct GeneralSettingsView: View {
             }
             .padding(24)
         }
+        // F6=A 系统冲突 Alert(可强制继续保存)
+        .alert(
+            "快捷键可能跟系统冲突",
+            isPresented: Binding(
+                get: { pendingHotkey != nil },
+                set: { if !$0 { pendingHotkey = nil; pendingHotkeySlot = nil } }
+            ),
+            actions: {
+                Button("继续使用", role: .destructive) {
+                    commitPendingHotkey()
+                }
+                Button("取消", role: .cancel) {
+                    pendingHotkey = nil
+                    pendingHotkeySlot = nil
+                }
+            },
+            message: {
+                Text("此快捷键已被系统占用:\(pendingConflictLabel)。继续使用可能导致 VoiceBee 在前台 App 内不响应。")
+            }
+        )
+    }
+
+    // MARK: - Phase 3-B: hotkey commit + 冲突检查
+
+    /// HotkeyRecorderView onCommit callback — 拦截做系统冲突检查后再保存
+    private func handleHotkeyCommit(candidate: Hotkey, slot: HotkeyPendingSlot) {
+        // 录入 candidate 已经是 .hold mode(recorder 默认),需保留当前 hotkey 的 mode 字段.
+        // 但对 repeatLast slot 强制 .hold(F2=C).
+        let merged: Hotkey
+        switch slot {
+        case .main:
+            merged = candidate.with(mode: appState.hotkey.mode)
+        case .repeatLast:
+            merged = candidate.with(mode: .hold)
+        }
+
+        if let conflict = HotkeyConflictChecker.systemConflict(for: merged) {
+            // 命中系统黑名单 → 弹 Alert,等用户选"继续 / 取消"
+            pendingHotkey = merged
+            pendingHotkeySlot = slot
+            pendingConflictLabel = conflict.label
+            return
+        }
+        applyHotkey(merged, slot: slot)
+    }
+
+    private func commitPendingHotkey() {
+        guard let pending = pendingHotkey, let slot = pendingHotkeySlot else { return }
+        VJLog.log("⚠️ 用户强制使用系统冲突的快捷键: \(pending.displayName) (\(pendingConflictLabel))", prefix: "Settings")
+        applyHotkey(pending, slot: slot)
+        pendingHotkey = nil
+        pendingHotkeySlot = nil
+    }
+
+    private func applyHotkey(_ hotkey: Hotkey, slot: HotkeyPendingSlot) {
+        switch slot {
+        case .main:
+            appState.hotkey = hotkey
+            NotificationCenter.default.post(name: .hotkeyChanged, object: hotkey)
+        case .repeatLast:
+            appState.repeatLastHotkey = hotkey
+            NotificationCenter.default.post(name: .repeatLastHotkeyChanged, object: hotkey)
+        }
     }
 }
 
@@ -285,8 +374,12 @@ struct TranslateSettingsView: View {
     }
 
     private var conflictingTriggers: Set<TranslationTrigger> {
-        TranslationSettings.conflictingTriggers(mainModifiers: appState.hotkey.modifiers)
+        TranslationSettings.conflictingTriggers(mainModifiers: appState.hotkey.modifierMask)
     }
+
+    // Phase 3-B: 选词翻译快捷键的系统冲突 Alert state
+    @State private var pendingTranslateHotkey: Hotkey?
+    @State private var pendingTranslateConflictLabel: String = ""
 
     var body: some View {
         ScrollView {
@@ -377,14 +470,21 @@ struct TranslateSettingsView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
 
-                // 选词翻译快捷键
+                // 选词翻译快捷键(强制 .hold + 不允许 modifier-only,F2=C)
                 SettingsSection(title: "选词翻译快捷键", description: "") {
                     HStack {
                         Text("快捷键")
                             .font(.system(size: 13))
                         Spacer()
-                        HotkeyRecorderView(hotkey: $appState.translateHotkey) { combo in
-                            NotificationCenter.default.post(name: .translateHotkeyChanged, object: combo)
+                        HotkeyRecorderView(hotkey: appState.translateHotkey, acceptsModifierOnly: false) { candidate in
+                            let merged = candidate.with(mode: .hold)
+                            if let conflict = HotkeyConflictChecker.systemConflict(for: merged) {
+                                pendingTranslateHotkey = merged
+                                pendingTranslateConflictLabel = conflict.label
+                            } else {
+                                appState.translateHotkey = merged
+                                NotificationCenter.default.post(name: .translateHotkeyChanged, object: merged)
+                            }
                         }
                     }
                 }
@@ -465,6 +565,30 @@ struct TranslateSettingsView: View {
             }
             .padding(24)
         }
+        // Phase 3-B: 选词翻译快捷键系统冲突 Alert
+        .alert(
+            "快捷键可能跟系统冲突",
+            isPresented: Binding(
+                get: { pendingTranslateHotkey != nil },
+                set: { if !$0 { pendingTranslateHotkey = nil } }
+            ),
+            actions: {
+                Button("继续使用", role: .destructive) {
+                    if let pending = pendingTranslateHotkey {
+                        VJLog.log("⚠️ 用户强制使用系统冲突的翻译快捷键: \(pending.displayName) (\(pendingTranslateConflictLabel))", prefix: "Settings")
+                        appState.translateHotkey = pending
+                        NotificationCenter.default.post(name: .translateHotkeyChanged, object: pending)
+                    }
+                    pendingTranslateHotkey = nil
+                }
+                Button("取消", role: .cancel) {
+                    pendingTranslateHotkey = nil
+                }
+            },
+            message: {
+                Text("此快捷键已被系统占用:\(pendingTranslateConflictLabel)。继续使用可能导致 VoiceBee 在前台 App 内不响应。")
+            }
+        )
     }
 
     private var translateEngineDescription: String {

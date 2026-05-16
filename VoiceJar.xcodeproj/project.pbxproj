@@ -11,6 +11,7 @@
 		01D6383740D0F6368D095420 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DEEF8FFA5B0FFF51E917792 /* HistoryView.swift */; };
 		1246572D5D2F3A617EEDCD4A /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16F796DB92D4C64A975AD6B6 /* AppState.swift */; };
 		1BD2C9F2B9C5D191111C5B57 /* Vocab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9C4160E49FF532BB6829E76 /* Vocab.swift */; };
+		1D5764711A81343C2F1C1E05 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95F940479094E2B41B6D5A5E /* HotkeyTests.swift */; };
 		21DBB26955C9CA4896583AAF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A6CBDC9154F0C282A50EA5 /* SettingsView.swift */; };
 		29C54E25CB41C1E7CDAEA340 /* Stats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CDFF44A2924C1A2DC7756A3 /* Stats.swift */; };
 		2BCD370C82EEABC72D62A02B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C4A9D49138AD6947FD5400F /* OnboardingView.swift */; };
@@ -23,9 +24,11 @@
 		785011F0552D949D7017BD87 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 36D51B3E1A5C8B387942CAAC /* Assets.xcassets */; };
 		80BB8D58BA114CD68F2B59B9 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4058165AE4AF5C7BECBF8FFC /* WhisperKit */; };
 		8C8EAA22927940FA8717899D /* VoiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979833D372BF04538435722C /* VoiceEngine.swift */; };
+		979D58F1B5B303423504D076 /* Hotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC1C1041353D74BB7BC625D /* Hotkey.swift */; };
 		9916F9C9349AB52004816D70 /* HomeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B82EAAF805EC74E25D62A1C /* HomeSettingsView.swift */; };
 		9DC4AE135EA36E2A7651082C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 3012A96B12DA69FBB828A20C /* Sparkle */; };
 		A0DDC94B6A9449981FD6CCD5 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5118976F5C0B30D92DB7C76B /* HotkeyManager.swift */; };
+		A6A979E91C9A2D6077D088B4 /* HotkeyConflictChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7C93A2100A7D57012AC33D /* HotkeyConflictChecker.swift */; };
 		AC91346142531C0AC606F7F7 /* VocabSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05DF945895AFC0B84E9A6772 /* VocabSettingsView.swift */; };
 		BCFA255E00926DE3F6AFA71D /* StyleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD021072B3FA1528DF925802 /* StyleSettingsView.swift */; };
 		C199B8052239AF11B5CEE4DB /* PolishService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E9576E0681B1934291A92A /* PolishService.swift */; };
@@ -51,6 +54,7 @@
 
 /* Begin PBXFileReference section */
 		05DF945895AFC0B84E9A6772 /* VocabSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabSettingsView.swift; sourceTree = "<group>"; };
+		0DC1C1041353D74BB7BC625D /* Hotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hotkey.swift; sourceTree = "<group>"; };
 		16F796DB92D4C64A975AD6B6 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		1F22B9ED9193D2CB6508B334 /* TranslationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationSettings.swift; sourceTree = "<group>"; };
 		36D51B3E1A5C8B387942CAAC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -69,9 +73,11 @@
 		7523F1DB058A806D58B4E6F6 /* OverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindow.swift; sourceTree = "<group>"; };
 		7B82EAAF805EC74E25D62A1C /* HomeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeSettingsView.swift; sourceTree = "<group>"; };
 		7DEEF8FFA5B0FFF51E917792 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		7E7C93A2100A7D57012AC33D /* HotkeyConflictChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyConflictChecker.swift; sourceTree = "<group>"; };
 		7F296D60F816828BF0EC671D /* VoiceJarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoiceJarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		80EF7320219E5F40D6C5CD56 /* VocabPostprocessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabPostprocessorTests.swift; sourceTree = "<group>"; };
 		94F4BA7D75D434C5991D666E /* VoiceJarDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceJarDelegate.swift; sourceTree = "<group>"; };
+		95F940479094E2B41B6D5A5E /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
 		979833D372BF04538435722C /* VoiceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceEngine.swift; sourceTree = "<group>"; };
 		A9C4160E49FF532BB6829E76 /* Vocab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab.swift; sourceTree = "<group>"; };
 		AD021072B3FA1528DF925802 /* StyleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleSettingsView.swift; sourceTree = "<group>"; };
@@ -100,6 +106,7 @@
 		408DD1243D15BE4BB6D24E2C /* VoiceJarTests */ = {
 			isa = PBXGroup;
 			children = (
+				95F940479094E2B41B6D5A5E /* HotkeyTests.swift */,
 				80EF7320219E5F40D6C5CD56 /* VocabPostprocessorTests.swift */,
 			);
 			path = VoiceJarTests;
@@ -123,6 +130,7 @@
 			isa = PBXGroup;
 			children = (
 				D60D99E9AD6144D635CD689F /* ASRProvider.swift */,
+				7E7C93A2100A7D57012AC33D /* HotkeyConflictChecker.swift */,
 				5118976F5C0B30D92DB7C76B /* HotkeyManager.swift */,
 				4E686C3337B031DE20F46FA8 /* Logger.swift */,
 				D8E9576E0681B1934291A92A /* PolishService.swift */,
@@ -165,6 +173,7 @@
 			isa = PBXGroup;
 			children = (
 				16F796DB92D4C64A975AD6B6 /* AppState.swift */,
+				0DC1C1041353D74BB7BC625D /* Hotkey.swift */,
 				BC3D5E376F7219C196BAEC02 /* OutputStyle.swift */,
 				C31DF935B96049D2A7BF7022 /* PolishSettings.swift */,
 				6CDFF44A2924C1A2DC7756A3 /* Stats.swift */,
@@ -276,6 +285,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1D5764711A81343C2F1C1E05 /* HotkeyTests.swift in Sources */,
 				E7BD7A3042052FDB5FB6F9B8 /* VocabPostprocessorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -288,6 +298,8 @@
 				1246572D5D2F3A617EEDCD4A /* AppState.swift in Sources */,
 				01D6383740D0F6368D095420 /* HistoryView.swift in Sources */,
 				9916F9C9349AB52004816D70 /* HomeSettingsView.swift in Sources */,
+				979D58F1B5B303423504D076 /* Hotkey.swift in Sources */,
+				A6A979E91C9A2D6077D088B4 /* HotkeyConflictChecker.swift in Sources */,
 				A0DDC94B6A9449981FD6CCD5 /* HotkeyManager.swift in Sources */,
 				D4135D191774B25DB6DC060D /* HotkeyRecorderView.swift in Sources */,
 				C7B8777F3ACB6101F19CAF1B /* Logger.swift in Sources */,

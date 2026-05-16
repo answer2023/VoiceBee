@@ -91,21 +91,23 @@ class AppState {
     /// ASR 模型状态文字 — VoiceEngine 写,SettingsView 读.不持久化(仅 runtime UI 反馈)
     var asrModelStatusMessage: String = ""
 
-    /// 当前快捷键配置
-    var hotkey: HotkeyCombo {
+    /// 当前快捷键配置(Phase 3-B: HotkeyCombo → Hotkey enum)
+    var hotkey: Hotkey {
         didSet {
             hotkey.save()
-            statusMessage = "按住 \(hotkey.displayName) 开始说话"
+            statusMessage = hotkey.mode == .toggle
+                ? "按 \(hotkey.displayName) 切换录音"
+                : "按住 \(hotkey.displayName) 开始说话"
         }
     }
 
-    /// 翻译快捷键
-    var translateHotkey: HotkeyCombo {
+    /// 翻译快捷键(强制 .hold mode,F2=C)
+    var translateHotkey: Hotkey {
         didSet { translateHotkey.saveAsTranslateHotkey() }
     }
 
-    /// "重复粘贴上次结果"快捷键（默认 ⌥⇧V，可改）
-    var repeatLastHotkey: HotkeyCombo {
+    /// "重复粘贴上次结果"快捷键(默认 ⌥⇧V,强制 .hold mode,F2=C)
+    var repeatLastHotkey: Hotkey {
         didSet { repeatLastHotkey.saveAsRepeatLastHotkey() }
     }
 
@@ -117,10 +119,12 @@ class AppState {
     }
 
     init() {
-        let hk = HotkeyCombo.load()
+        let hk = Hotkey.load()
         self.hotkey = hk
         self.isPaused = UserDefaults.standard.bool(forKey: "is_paused")
-        self.statusMessage = "按住 \(hk.displayName) 开始说话"
+        self.statusMessage = hk.mode == .toggle
+            ? "按 \(hk.displayName) 切换录音"
+            : "按住 \(hk.displayName) 开始说话"
 
         let langCode = UserDefaults.standard.string(forKey: "recognition_language") ?? "zh-Hans"
         self.recognitionLanguage = RecognitionLanguage(rawValue: langCode) ?? .chineseSimplified
@@ -128,8 +132,8 @@ class AppState {
         let engineCode = UserDefaults.standard.string(forKey: "asr_engine") ?? ASREngine.sfSpeech.rawValue
         self.asrEngine = ASREngine(rawValue: engineCode) ?? .sfSpeech
 
-        self.translateHotkey = HotkeyCombo.loadTranslateHotkey()
-        self.repeatLastHotkey = HotkeyCombo.loadRepeatLastHotkey()
+        self.translateHotkey = Hotkey.loadTranslateHotkey()
+        self.repeatLastHotkey = Hotkey.loadRepeatLastHotkey()
         let targetLang = UserDefaults.standard.string(forKey: "translate_target_lang") ?? "auto"
         self.translateTargetLang = TranslateTargetLanguage(rawValue: targetLang) ?? .auto
 
@@ -182,157 +186,7 @@ enum TranslateTargetLanguage: String, CaseIterable {
     }
 }
 
-// MARK: - 快捷键配置
-
-struct HotkeyCombo: Equatable {
-    var keyCode: Int  // Carbon virtual key code, -1 表示纯修饰键
-    var modifiers: CGEventFlags
-
-    /// 是否是 Fn 单键模式
-    var isFnOnly: Bool { keyCode == -1 && modifiers == .maskSecondaryFn }
-
-    /// 预设快捷键
-    static let fn = HotkeyCombo(keyCode: -1, modifiers: .maskSecondaryFn)
-    static let optionSpace = HotkeyCombo(keyCode: kVK_Space, modifiers: .maskAlternate)
-    static let controlSpace = HotkeyCombo(keyCode: kVK_Space, modifiers: .maskControl)
-    static let fnF5 = HotkeyCombo(keyCode: kVK_F5, modifiers: .maskSecondaryFn)
-
-    static let presets: [(name: String, combo: HotkeyCombo)] = [
-        ("Fn (按住说话)", .fn),
-        ("⌥ Space (Option+空格)", .optionSpace),
-        ("⌃ Space (Control+空格)", .controlSpace),
-        ("Fn + F5", .fnF5),
-    ]
-
-    var displayName: String {
-        if isFnOnly { return "Fn" }
-        var parts: [String] = []
-        if modifiers.contains(.maskControl) { parts.append("⌃") }
-        if modifiers.contains(.maskAlternate) { parts.append("⌥") }
-        if modifiers.contains(.maskShift) { parts.append("⇧") }
-        if modifiers.contains(.maskCommand) { parts.append("⌘") }
-        if modifiers.contains(.maskSecondaryFn) { parts.append("Fn+") }
-        parts.append(keyName)
-        return parts.joined()
-    }
-
-    private var keyName: String {
-        switch keyCode {
-        case -1: return ""
-        case kVK_Space: return "Space"
-        case kVK_Return: return "Return"
-        case kVK_Tab: return "Tab"
-        case kVK_Delete: return "Delete"
-        case kVK_Escape: return "Esc"
-        case kVK_F1: return "F1"
-        case kVK_F2: return "F2"
-        case kVK_F3: return "F3"
-        case kVK_F4: return "F4"
-        case kVK_F5: return "F5"
-        case kVK_F6: return "F6"
-        case kVK_F7: return "F7"
-        case kVK_F8: return "F8"
-        case kVK_F9: return "F9"
-        case kVK_F10: return "F10"
-        case kVK_F11: return "F11"
-        case kVK_F12: return "F12"
-        case kVK_UpArrow: return "↑"
-        case kVK_DownArrow: return "↓"
-        case kVK_LeftArrow: return "←"
-        case kVK_RightArrow: return "→"
-        default:
-            // 尝试通过 Carbon key code 转换为字符
-            if let char = keyCodeToChar(keyCode) {
-                return char.uppercased()
-            }
-            return "Key(\(keyCode))"
-        }
-    }
-
-    private func keyCodeToChar(_ code: Int) -> String? {
-        // 使用 ASCII 键盘布局，避免中文输入法下转换失败
-        guard let sourceRef = TISCopyCurrentASCIICapableKeyboardLayoutInputSource() else { return nil }
-        let source = sourceRef.takeRetainedValue()
-        guard let layoutData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
-        let data = Unmanaged<CFData>.fromOpaque(layoutData).takeUnretainedValue() as Data
-        var deadKeyState: UInt32 = 0
-        var chars = [UniChar](repeating: 0, count: 4)
-        var length = 0
-        data.withUnsafeBytes { rawBuf in
-            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return }
-            UCKeyTranslate(ptr, UInt16(code), UInt16(kUCKeyActionDisplay), 0, UInt32(LMGetKbdType()),
-                           UInt32(kUCKeyTranslateNoDeadKeysBit), &deadKeyState, 4, &length, &chars)
-        }
-        guard length > 0 else { return nil }
-        return String(utf16CodeUnits: chars, count: length)
-    }
-
-    func matches(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        return keyCode == Int64(self.keyCode) && flags.contains(modifiers)
-    }
-
-    /// 严格匹配：要求修饰键完全一致（防止 ⌘⌥T 误触发 ⌥T）
-    func matchesExact(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        let relevant: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
-        return keyCode == Int64(self.keyCode) && flags.intersection(relevant) == modifiers.intersection(relevant)
-    }
-
-    func modifierStillHeld(flags: CGEventFlags) -> Bool {
-        return flags.contains(modifiers)
-    }
-
-    // MARK: - 持久化
-
-    func save() {
-        UserDefaults.standard.set(keyCode, forKey: "hotkey_keyCode")
-        UserDefaults.standard.set(Int(modifiers.rawValue), forKey: "hotkey_modifiers")
-    }
-
-    static func load() -> HotkeyCombo {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: "hotkey_keyCode") != nil else {
-            return .optionSpace  // 默认 ⌥Space（Fn/Globe 键在新 Mac 上被系统拦截）
-        }
-        let code = defaults.integer(forKey: "hotkey_keyCode")
-        let mods = CGEventFlags(rawValue: UInt64(defaults.integer(forKey: "hotkey_modifiers")))
-        return HotkeyCombo(keyCode: code, modifiers: mods)
-    }
-
-    // MARK: - 翻译快捷键持久化
-
-    func saveAsTranslateHotkey() {
-        UserDefaults.standard.set(keyCode, forKey: "translate_hotkey_keyCode")
-        UserDefaults.standard.set(Int(modifiers.rawValue), forKey: "translate_hotkey_modifiers")
-    }
-
-    static func loadTranslateHotkey() -> HotkeyCombo {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: "translate_hotkey_keyCode") != nil else {
-            return HotkeyCombo(keyCode: 17, modifiers: .maskAlternate)  // 默认 ⌥T
-        }
-        let code = defaults.integer(forKey: "translate_hotkey_keyCode")
-        let mods = CGEventFlags(rawValue: UInt64(defaults.integer(forKey: "translate_hotkey_modifiers")))
-        return HotkeyCombo(keyCode: code, modifiers: mods)
-    }
-
-    // MARK: - 重复粘贴上次结果快捷键持久化
-
-    func saveAsRepeatLastHotkey() {
-        UserDefaults.standard.set(keyCode, forKey: "repeat_last_hotkey_keyCode")
-        UserDefaults.standard.set(Int(modifiers.rawValue), forKey: "repeat_last_hotkey_modifiers")
-    }
-
-    static func loadRepeatLastHotkey() -> HotkeyCombo {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: "repeat_last_hotkey_keyCode") != nil else {
-            // 默认 ⌥⇧V — kVK_ANSI_V = 9
-            return HotkeyCombo(keyCode: kVK_ANSI_V, modifiers: [.maskAlternate, .maskShift])
-        }
-        let code = defaults.integer(forKey: "repeat_last_hotkey_keyCode")
-        let mods = CGEventFlags(rawValue: UInt64(defaults.integer(forKey: "repeat_last_hotkey_modifiers")))
-        return HotkeyCombo(keyCode: code, modifiers: mods)
-    }
-}
+// MARK: - 快捷键配置(Hotkey enum / HotkeyMode / ModifierKey 定义见 Hotkey.swift)
 
 /// 输入模式
 enum InputMode: String, CaseIterable {
