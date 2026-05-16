@@ -322,10 +322,18 @@ class VoiceEngine {
                         self?.overlayWindow?.updateText(text)
                     },
                     onFinal: { [weak self] text in
-                        self?.appState.liveText = text
-                        self?.appState.rawTranscription = text
-                        self?.overlayWindow?.updateText(text)
-                        self?.log("✅ 最终识别结果: \(text)")
+                        // Phase 3-A (P3=B):final 段在 VoiceEngine 层做 vocab 拼写矫正,
+                        // 让下游 polish / inject 都拿到正确专名拼写.partial 不矫正(P4=A).
+                        guard let self else { return }
+                        let corrected = VocabPostprocessor.apply(text, vocab: self.appState.vocab.entries)
+                        self.appState.liveText = corrected
+                        self.appState.rawTranscription = corrected
+                        self.overlayWindow?.updateText(corrected)
+                        if corrected != text {
+                            self.log("✅ 最终识别结果(已矫正): \(corrected)  ⟵  \(text)")
+                        } else {
+                            self.log("✅ 最终识别结果: \(corrected)")
+                        }
                     },
                     onError: { [weak self] error in
                         self?.handleASRError(error)

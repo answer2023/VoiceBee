@@ -8,7 +8,46 @@ struct VocabEntry: Identifiable, Codable, Equatable, Hashable {
     var notes: String = ""
     var enabled: Bool = true
     var hitCount: Int = 0           // 命中次数
+    /// 已知错拼/别名 — 给 VocabPostprocessor 精确替换用。Phase 3-A 引入,旧 JSON 缺此字段时 decode 容错为 []
+    var aliases: [String] = []
     var createdAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        term: String,
+        category: String = "",
+        notes: String = "",
+        enabled: Bool = true,
+        hitCount: Int = 0,
+        aliases: [String] = [],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.term = term
+        self.category = category
+        self.notes = notes
+        self.enabled = enabled
+        self.hitCount = hitCount
+        self.aliases = aliases
+        self.createdAt = createdAt
+    }
+
+    // Phase 3-A:旧 vocab.json 不含 aliases / 部分字段,用 decodeIfPresent 全量容错
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.term = try c.decode(String.self, forKey: .term)
+        self.category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        self.hitCount = try c.decodeIfPresent(Int.self, forKey: .hitCount) ?? 0
+        self.aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, term, category, notes, enabled, hitCount, aliases, createdAt
+    }
 }
 
 /// 词典存储 — JSON 持久化到 ~/Library/Application Support/VoiceBee/vocab.json
@@ -24,7 +63,46 @@ final class VocabStore {
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         self.fileURL = dir.appendingPathComponent("vocab.json")
         load()
+        ensureDefaultsIfEmpty()
     }
+
+    /// Phase 3-A (P9=A):仅在词典完全为空时预置营销专名 + 已知错拼.
+    /// 不覆盖用户已有数据 — 老用户哪怕只有一条自定义条目,默认词典都不会注入.
+    private func ensureDefaultsIfEmpty() {
+        guard entries.isEmpty else { return }
+        entries = Self.defaultEntries
+        save()
+    }
+
+    /// 营销专名默认词典 — alias 来自 PoC 实测错例(SFSpeech / WhisperKit large-v3 large-v3)
+    /// 来源:docs/whisperkit-poc-results.md C 节 + CLAUDE.md 「专名词典注入失效」
+    static let defaultEntries: [VocabEntry] = [
+        VocabEntry(
+            term: "VoiceBee",
+            category: "产品名",
+            aliases: ["Vocab", "Voizbee", "Boysbee", "Vorce P", "was be", "VB", "Voice Bee", "voice bee"]
+        ),
+        VocabEntry(
+            term: "JotBee",
+            category: "产品名",
+            aliases: ["Jotby", "Jot B", "JotB", "Jot Bee", "jot bee"]
+        ),
+        VocabEntry(
+            term: "ClearSky",
+            category: "团队",
+            aliases: ["Clear Sky", "clear sky", "Clearsky"]
+        ),
+        VocabEntry(
+            term: "WhisperKit",
+            category: "技术",
+            aliases: ["Whisper Kit", "Whisper kit", "whisper kit", "Whisperkit"]
+        ),
+        VocabEntry(
+            term: "macOS",
+            category: "技术",
+            aliases: ["MacOS", "Mac OS", "mac OS", "Macos", "mac os"]
+        )
+    ]
 
     /// 启用中的词条（用于 ASR contextualStrings 与 polish prompt 注入）
     var activeTerms: [String] {

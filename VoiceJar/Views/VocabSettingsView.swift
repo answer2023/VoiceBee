@@ -10,6 +10,7 @@ struct VocabSettingsView: View {
     @State private var editingId: UUID?
     @State private var editingTerm: String = ""
     @State private var editingCategory: String = ""
+    @State private var editingAliases: String = ""
     @State private var showImport = false
     @State private var selectedIds: Set<UUID> = []
     @State private var filter: VocabFilter = .all
@@ -280,15 +281,30 @@ struct VocabSettingsView: View {
                                             isSelected: selectedIds.contains(entry.id),
                                             editingTerm: $editingTerm,
                                             editingCategory: $editingCategory,
+                                            editingAliases: $editingAliases,
                                             onStartEdit: {
                                                 editingId = entry.id
                                                 editingTerm = entry.term
                                                 editingCategory = entry.category
+                                                // Phase 3-A:进入编辑态时把已有 aliases 平铺为逗号分隔字符串
+                                                editingAliases = entry.aliases.joined(separator: ", ")
                                             },
                                             onCommit: {
                                                 var updated = entry
                                                 updated.term = editingTerm.trimmingCharacters(in: .whitespacesAndNewlines)
                                                 updated.category = editingCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                // Phase 3-A:拆 aliases — 逗号或换行分隔,trim 空白,去空,保留顺序,去重
+                                                let raw = editingAliases.split(whereSeparator: { $0 == "," || $0 == "\n" })
+                                                var seen: Set<String> = []
+                                                let parsed: [String] = raw.compactMap { piece in
+                                                    let s = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                    guard !s.isEmpty else { return nil }
+                                                    let key = s.lowercased()
+                                                    if seen.contains(key) { return nil }
+                                                    seen.insert(key)
+                                                    return s
+                                                }
+                                                updated.aliases = parsed
                                                 if !updated.term.isEmpty {
                                                     appState.vocab.update(updated)
                                                 }
@@ -513,6 +529,7 @@ private struct VocabRow: View {
     let isSelected: Bool
     @Binding var editingTerm: String
     @Binding var editingCategory: String
+    @Binding var editingAliases: String
     let onStartEdit: () -> Void
     let onCommit: () -> Void
     let onCancel: () -> Void
@@ -523,89 +540,113 @@ private struct VocabRow: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onToggleSelect) {
-                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? .blue : .secondary.opacity(0.5))
-            }
-            .buttonStyle(.plain)
-
-            Toggle("", isOn: Binding(
-                get: { entry.enabled },
-                set: { _ in onToggle() }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
-
-            if isEditing {
-                TextField("词条", text: $editingTerm)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .onSubmit(onCommit)
-                TextField("分类", text: $editingCategory)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .frame(width: 90)
-                    .onSubmit(onCommit)
-                Button("✓", action: onCommit)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                Button("×", action: onCancel)
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-            } else {
-                Text(entry.term)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(entry.enabled ? .primary : .tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if VocabStore.isSuspect(entry.term) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.orange.opacity(0.7))
-                        .help("此条目可能不适合作为语音热词（含 URL / 邮箱 / 空格 / 标点）")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button(action: onToggleSelect) {
+                    Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isSelected ? .blue : .secondary.opacity(0.5))
                 }
+                .buttonStyle(.plain)
 
-                if !entry.category.isEmpty {
-                    Text(entry.category)
-                        .font(.system(size: 10))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.15), in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
+                Toggle("", isOn: Binding(
+                    get: { entry.enabled },
+                    set: { _ in onToggle() }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
 
-                Spacer()
+                if isEditing {
+                    TextField("词条", text: $editingTerm)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                        .onSubmit(onCommit)
+                    TextField("分类", text: $editingCategory)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                        .frame(width: 90)
+                        .onSubmit(onCommit)
+                    Button("✓", action: onCommit)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                    Button("×", action: onCancel)
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                } else {
+                    Text(entry.term)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(entry.enabled ? .primary : .tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                if entry.hitCount > 0 {
-                    Text("命中 \(entry.hitCount)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
+                    if VocabStore.isSuspect(entry.term) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.orange.opacity(0.7))
+                            .help("此条目可能不适合作为语音热词（含 URL / 邮箱 / 空格 / 标点）")
+                    }
 
-                if isHovering {
-                    Button {
-                        onStartEdit()
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
+                    if !entry.category.isEmpty {
+                        Text(entry.category)
+                            .font(.system(size: 10))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.secondary.opacity(0.15), in: Capsule())
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .help("编辑")
 
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.red.opacity(0.7))
+                    if !entry.aliases.isEmpty {
+                        Text("✦\(entry.aliases.count)")
+                            .font(.system(size: 10))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.blue.opacity(0.12), in: Capsule())
+                            .foregroundStyle(.blue)
+                            .help("已知错拼 \(entry.aliases.count) 个：\(entry.aliases.joined(separator: "、"))")
                     }
-                    .buttonStyle(.plain)
-                    .help("删除")
+
+                    Spacer()
+
+                    if entry.hitCount > 0 {
+                        Text("命中 \(entry.hitCount)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    if isHovering {
+                        Button {
+                            onStartEdit()
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("编辑")
+
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.red.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                        .help("删除")
+                    }
+                }
+            }
+
+            // 编辑模式下第二行:alias 输入框
+            if isEditing {
+                HStack(spacing: 8) {
+                    // 占位让 alias 输入跟主行右侧对齐(checkbox 13 + spacing 8 + toggle 28 + spacing 8)
+                    Spacer().frame(width: 57)
+                    TextField("已知错拼（逗号分隔，如 Vocab, Voizbee, was be）", text: $editingAliases)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                        .onSubmit(onCommit)
                 }
             }
         }
