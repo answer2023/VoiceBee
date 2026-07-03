@@ -477,7 +477,7 @@ class VoiceEngine {
 
                     switch self.appState.inputMode {
                     case .universal:
-                        TextInjector.inject(finalText)
+                        self.injectOrNotify(finalText)
                     case .journal:
                         self.openJournalWithText(finalText)
                     }
@@ -494,7 +494,7 @@ class VoiceEngine {
 
             switch appState.inputMode {
             case .universal:
-                TextInjector.inject(rawText)
+                injectOrNotify(rawText)
             case .journal:
                 openJournalWithText(rawText)
             }
@@ -585,13 +585,22 @@ class VoiceEngine {
                 self.overlayWindow?.showTranslationBadge(false)
                 self.hotkeyManager.translateMarked = false
                 switch self.appState.inputMode {
-                case .universal: TextInjector.inject(finalText)
+                case .universal: self.injectOrNotify(finalText)
                 case .journal: self.openJournalWithText(finalText)
                 }
                 self.addHistory(rawText: rawText, polishedText: finalText, duration: duration)
                 self.appState.isProcessing = false
                 self.appState.statusMessage = "按住 \(self.appState.hotkey.displayName) 开始说话"
             }
+        }
+    }
+
+    /// 注入失败(无辅助功能权限,常见于覆盖安装后 TCC 未同步)时告知用户:
+    /// 文本已留在剪贴板,可手动粘贴
+    private func injectOrNotify(_ text: String) {
+        if !TextInjector.inject(text) {
+            log("⚠️ 注入失败:无辅助功能权限,文本已留在剪贴板")
+            appState.errorMessage = "缺少辅助功能权限，无法自动输入。文本已复制到剪贴板，可手动 ⌘V 粘贴"
         }
     }
 
@@ -609,7 +618,7 @@ class VoiceEngine {
             return
         }
         log("📋 重复粘贴上次结果（\(text.count) 字）")
-        TextInjector.inject(text)
+        injectOrNotify(text)
     }
 
     /// 全链路取消（Esc 触发）— 干净地中止任何正在进行的录音 / 识别 / 润色 / 翻译

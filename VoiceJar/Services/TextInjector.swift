@@ -10,15 +10,25 @@ struct TextInjector {
     nonisolated(unsafe) private(set) static var lastInjectedText: String = ""
 
     /// 通过模拟剪贴板粘贴注入文本（最可靠的方式）
-    static func inject(_ text: String) {
+    /// - Returns: false = 无辅助功能权限,⌘V 事件发不出去。此时文本留在剪贴板
+    ///   (不恢复旧内容)供用户手动粘贴,否则口述内容会随剪贴板恢复彻底消失
+    @discardableResult
+    static func inject(_ text: String) -> Bool {
         // nonisolated(unsafe) 的合同：所有调用必须在主线程。debug-only 守卫，0 release 成本。
         assert(Thread.isMainThread, "TextInjector.inject must be called on main thread")
 
         // 0. 记录最后一次注入文本（不区分来源：录音 / 翻译 / 历史重粘贴都算）
         if !text.isEmpty { lastInjectedText = text }
 
-        // 1. 保存当前剪贴板内容
         let pasteboard = NSPasteboard.general
+
+        guard AXIsProcessTrusted() else {
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return false
+        }
+
+        // 1. 保存当前剪贴板内容
         let previousContents = pasteboard.string(forType: .string)
 
         // 2. 写入新文本到剪贴板
@@ -32,6 +42,7 @@ struct TextInjector {
         //    监测 changeCount 变化确认粘贴完成，最多等 1.5 秒
         let changeCount = pasteboard.changeCount
         restoreClipboard(previous: previousContents, expectedChangeCount: changeCount, attempt: 0)
+        return true
     }
 
     /// 等待目标 App 消费粘贴事件后恢复剪贴板
