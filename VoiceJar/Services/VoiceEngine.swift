@@ -20,6 +20,7 @@ class VoiceEngine {
     private var streamingTask: Task<Void, Never>?
     private var polishTask: Task<Void, Never>?
     private var translateTask: Task<Void, Never>?
+    private var prepareTask: Task<Void, Never>?
 
     private func log(_ msg: String) {
         VJLog.log(msg, prefix: "Engine")
@@ -465,6 +466,7 @@ class VoiceEngine {
                     self.log("✅ 润色结果: \(finalText)")
                 } catch {
                     self.log("⚠️ 润色失败，使用原文: \(error)")
+                    self.surfacePolishFailure(error, context: "润色")
                     finalText = rawText
                 }
 
@@ -534,6 +536,8 @@ class VoiceEngine {
                     } catch {
                         if Task.isCancelled { return }
                         await MainActor.run {
+                            self.log("⚠️ 后台润色失败，保留原文: \(error)")
+                            self.surfacePolishFailure(error, context: "润色")
                             self.polishTask = nil
                             self.appState.polishedText = rawText
                             self.appState.isProcessing = false
@@ -576,6 +580,7 @@ class VoiceEngine {
                 self.log("✅ 翻译结果: \(finalText)")
             } catch {
                 self.log("⚠️ 翻译失败 fallback 到原文: \(error)")
+                self.surfacePolishFailure(error, context: "翻译")
                 finalText = rawText
             }
             if Task.isCancelled { return }
@@ -593,6 +598,19 @@ class VoiceEngine {
                 self.appState.isProcessing = false
                 self.appState.statusMessage = "按住 \(self.appState.hotkey.displayName) 开始说话"
             }
+        }
+    }
+
+    /// 润色/翻译失败分级上报 — 配置类错误(缺 API Key / 401/403)用户可自修,
+    /// 必须走 errorMessage 提示;瞬态错误(网络/超时/解析)保持静默 fallback 原文,只记日志
+    private func surfacePolishFailure(_ error: Error, context: String) {
+        switch error {
+        case PolishError.invalidConfig(let msg):
+            appState.errorMessage = "\(context)失败：\(msg)。请检查 API Key／引擎配置"
+        case PolishError.apiError(let code, _) where code == 401 || code == 403:
+            appState.errorMessage = "\(context)失败（HTTP \(code) 鉴权错误）。请检查 API Key／引擎配置"
+        default:
+            break
         }
     }
 
@@ -692,6 +710,10 @@ class VoiceEngine {
             return
         }
         log("🔄 ASR 切换: \(oldEngineID.rawValue) → \(newEngine.rawValue)")
+        // 旧实例若在 prepare(下载/加载模型)中,必须 cancel Task 让下载中止 —
+        // 否则弃用实例继续下载,和新实例争抢同一模型目录 + 双份 Core ML 内存
+        prepareTask?.cancel()
+        prepareTask = nil
         asrProvider.cancel()
         asrProvider = Self.makeProvider(for: newEngine)
         appState.asrModelStatusMessage = "正在准备 \(asrProvider.displayName)..."
@@ -701,30 +723,33 @@ class VoiceEngine {
     /// 调度后台 prepare — 100ms 启动延迟保险 + 错误回退到 sfSpeech(F6)
     private func schedulePrepare(for provider: any ASRProvider) {
         let providerID = type(of: provider).id
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 100_000_000)  // F3 保险
-            guard let self else { return }
+        // 过期事件用实例身份判定,不能用 engine ID — 同引擎快速来回切换(whisperKit→
+        // sfSpeech→whisperKit)时新旧实例 ID 相同,旧实例事件会冒充新实例
+        let providerToken = ObjectIdentifier(provider)
+        prepareTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)  // F3 保险(cancel 时 sleep 静默返回)
+            guard let self, !Task.isCancelled else { return }
             self.log("⏳ 开始 prepare: \(providerID.rawValue)")
             do {
                 try await provider.prepare { @Sendable [weak self] event in
                     // progress callback 是 @Sendable,不能直接访 @MainActor self
                     Task { @MainActor [weak self] in
-                        self?.handlePrepareEvent(event, providerID: providerID)
+                        self?.handlePrepareEvent(event, providerID: providerID, token: providerToken)
                     }
                 }
             } catch let asrError as ASRError {
                 self.log("❌ prepare 失败: \(asrError)")
-                self.handlePrepareFailure(asrError, attemptedEngine: providerID)
+                self.handlePrepareFailure(asrError, attemptedEngine: providerID, token: providerToken)
             } catch {
                 self.log("❌ prepare 未知错误: \(error)")
-                self.handlePrepareFailure(.underlying(error), attemptedEngine: providerID)
+                self.handlePrepareFailure(.underlying(error), attemptedEngine: providerID, token: providerToken)
             }
         }
     }
 
-    /// 处理 prepare 进度事件 — 防御:provider 已切换则丢弃过期事件
-    private func handlePrepareEvent(_ event: ASRPrepareEvent, providerID: ASREngine) {
-        guard providerID == type(of: asrProvider).id else {
+    /// 处理 prepare 进度事件 — 防御:provider 实例已切换则丢弃过期事件
+    private func handlePrepareEvent(_ event: ASRPrepareEvent, providerID: ASREngine, token: ObjectIdentifier) {
+        guard token == ObjectIdentifier(asrProvider) else {
             log("🔇 丢弃过期 prepare 事件(provider 已切换): \(providerID.rawValue)")
             return
         }
@@ -742,8 +767,14 @@ class VoiceEngine {
         }
     }
 
-    /// F6: prepare 失败回滚到 sfSpeech.防御:用户期间又切了别的 engine 则不动
-    private func handlePrepareFailure(_ error: ASRError, attemptedEngine: ASREngine) {
+    /// F6: prepare 失败回滚到 sfSpeech.防御:用户期间又切了别的 engine 则不动;
+    /// 同引擎来回切换时旧实例的过期失败也要丢弃(engine ID 相同,靠实例身份判定),
+    /// 否则会错误回滚健康的新实例的 asrEngine 选择
+    private func handlePrepareFailure(_ error: ASRError, attemptedEngine: ASREngine, token: ObjectIdentifier) {
+        guard token == ObjectIdentifier(asrProvider) else {
+            log("🔇 丢弃过期 prepare 失败(provider 已切换): \(attemptedEngine.rawValue)")
+            return
+        }
         appState.asrModelStatusMessage = "引擎准备失败: \(error.localizedDescription ?? "未知错误")"
         // 只在 1) 失败的不是 sfSpeech 本身 + 2) 用户当前仍指向失败引擎 时才回滚
         if attemptedEngine != .sfSpeech, appState.asrEngine == attemptedEngine {
