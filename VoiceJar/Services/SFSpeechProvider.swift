@@ -140,8 +140,11 @@ final class SFSpeechProvider: ASRProvider {
 
     func stopStreaming() async {
         // P3 决策 A:停麦克 + endAudio,立即返回;onFinal 在后续 SFSpeech callback 自然到
+        // removeTap 必须无条件执行(无 tap 时是安全 no-op):engine 会因输入设备变更
+        // (AirPods/USB 麦克风 断连)自行停止且不清 tap,此时 isRunning=false,
+        // 若跳过 removeTap,下次 installTap 撞已有 tap 会抛不可捕获的 ObjC 异常直接崩溃
+        audioEngine.inputNode.removeTap(onBus: 0)
         if audioEngine.isRunning {
-            audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
         }
         rotationTimer?.invalidate()
@@ -154,8 +157,9 @@ final class SFSpeechProvider: ASRProvider {
     func cancel() {
         // Esc 全链路取消:停麦克 + 取消 ASR + 清所有 in-flight 状态
         activeSessionToken = nil
+        // 同 stopStreaming:removeTap 无条件执行,防 engine 自停后 tap 残留
+        audioEngine.inputNode.removeTap(onBus: 0)
         if audioEngine.isRunning {
-            audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
         }
         rotationTimer?.invalidate()
