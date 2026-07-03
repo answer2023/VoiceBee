@@ -82,7 +82,18 @@ private struct HotkeyRecorderHelper: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: HotkeyRecorderNSView, context: Context) {}
+    func updateNSView(_ nsView: HotkeyRecorderNSView, context: Context) {
+        // makeNSView 的一次性抢占可能因 window 尚未 attach 而落空 → 录制中持续补抢.
+        // 已 resign 过的(焦点被别的控件夺走)不再抢回,交给 resignFirstResponder 的 onCancel 结束录制,
+        // 否则点 recorder B 时 A 的补抢会把 first responder 从 B 手里夺回来(ping-pong).
+        guard isRecording, !nsView.hasResigned else { return }
+        DispatchQueue.main.async {
+            guard !nsView.hasResigned,
+                  let window = nsView.window,
+                  window.firstResponder !== nsView else { return }
+            window.makeFirstResponder(nsView)
+        }
+    }
 }
 
 final class HotkeyRecorderNSView: NSView {
@@ -90,11 +101,25 @@ final class HotkeyRecorderNSView: NSView {
     var onCancel: (() -> Void)?
     var acceptsModifierOnly: Bool = true
 
+    /// 一旦失去 first responder 置 true — updateNSView 靠它停止补抢(每次开始录制都新建实例,无需重置)
+    private(set) var hasResigned = false
+
     /// 待 commit 的 modifier-only — 250ms 窗口内若有 keyDown,清掉走 combo 路径
     private var pendingModifierKey: ModifierKey?
     private var pendingTimer: DispatchWorkItem?
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func resignFirstResponder() -> Bool {
+        // 失焦即取消录制 — 否则点了别的控件后 keyDown/flagsChanged 再也收不到,按钮永久卡在"按下快捷键…"
+        cancelPending()
+        hasResigned = true
+        // async 跳出当前 responder-chain / SwiftUI 更新事务再写 SwiftUI state(录制已结束时 onCancel 幂等无害)
+        DispatchQueue.main.async { [weak self] in
+            self?.onCancel?()
+        }
+        return super.resignFirstResponder()
+    }
 
     override func keyDown(with event: NSEvent) {
         // Escape 取消
