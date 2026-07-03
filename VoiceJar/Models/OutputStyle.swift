@@ -248,6 +248,9 @@ enum OutputStyle: String, CaseIterable, Codable, Identifiable {
 /// 风格设置存储 — master 开关 + 默认风格 + 启用的风格集合
 @Observable
 final class OutputStyleSettings {
+    /// load() 里赋值触发 didSet→save() 会用未加载完的默认值清掉磁盘配置,load 期间压制
+    private var isLoading = false
+
     var masterEnabled: Bool = true {
         didSet { save() }
     }
@@ -292,6 +295,7 @@ final class OutputStyleSettings {
     }
 
     private func save() {
+        guard !isLoading else { return }
         let d = UserDefaults.standard
         d.set(masterEnabled, forKey: "outputStyle_master")
         d.set(defaultStyle.rawValue, forKey: "outputStyle_default")
@@ -299,6 +303,8 @@ final class OutputStyleSettings {
     }
 
     private func load() {
+        isLoading = true
+        defer { isLoading = false }
         let d = UserDefaults.standard
         if d.object(forKey: "outputStyle_master") != nil {
             masterEnabled = d.bool(forKey: "outputStyle_master")

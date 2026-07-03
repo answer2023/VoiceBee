@@ -80,6 +80,9 @@ enum TranslationTrigger: String, CaseIterable, Codable, Identifiable {
 /// 口述翻译 + 工作语言设置
 @Observable
 final class TranslationSettings {
+    /// load() 里赋值触发 didSet→save() 会用未加载完的默认值清掉磁盘配置,load 期间压制
+    private var isLoading = false
+
     var workingLanguages: Set<WorkingLanguage> = [.zhHans, .en] {
         didSet { save() }
     }
@@ -132,6 +135,7 @@ final class TranslationSettings {
     }
 
     private func save() {
+        guard !isLoading else { return }
         let d = UserDefaults.standard
         d.set(workingLanguages.map(\.rawValue), forKey: "translation_workingLanguages")
         d.set(targetLanguage?.rawValue ?? "", forKey: "translation_targetLanguage")
@@ -139,6 +143,8 @@ final class TranslationSettings {
     }
 
     private func load() {
+        isLoading = true
+        defer { isLoading = false }
         let d = UserDefaults.standard
         if let arr = d.stringArray(forKey: "translation_workingLanguages") {
             let parsed = Set(arr.compactMap { WorkingLanguage(rawValue: $0) })

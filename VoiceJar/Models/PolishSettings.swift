@@ -7,6 +7,10 @@ import Security
 class PolishSettings {
     private let keyPrefix: String
 
+    /// load() 里的赋值会触发 didSet→save(),那一刻其余属性还是默认值,
+    /// 会把磁盘上的用户配置先清空再读回 —— load 期间必须压制持久化
+    private var isLoading = false
+
     var engine: PolishEngine = .none {
         didSet { save() }
     }
@@ -45,6 +49,7 @@ class PolishSettings {
     // MARK: - 持久化
 
     private func save() {
+        guard !isLoading else { return }
         let defaults = UserDefaults.standard
         defaults.set(engine.rawValue, forKey: "\(keyPrefix)_engine")
         defaults.set(model, forKey: "\(keyPrefix)_model")
@@ -52,6 +57,8 @@ class PolishSettings {
     }
 
     private func load() {
+        isLoading = true
+        defer { isLoading = false }
         let defaults = UserDefaults.standard
         if let raw = defaults.string(forKey: "\(keyPrefix)_engine"),
            let eng = PolishEngine(rawValue: raw) {
@@ -68,6 +75,9 @@ class PolishSettings {
     private var keychainAccount: String { "\(keyPrefix)_apiKey" }
 
     private func saveAPIKey() {
+        // load 期间不写 Keychain:否则 Keychain 读取偶发失败时,
+        // apiKey="" 的 didSet 会把用户已存的 key 删掉
+        guard !isLoading else { return }
         guard !apiKey.isEmpty else {
             deleteAPIKeyFromKeychain()
             return
