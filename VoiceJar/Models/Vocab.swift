@@ -54,6 +54,8 @@ struct VocabEntry: Identifiable, Codable, Equatable, Hashable {
 @Observable
 final class VocabStore {
     private(set) var entries: [VocabEntry] = []
+    /// vocab.json 存在但 decode 失败 — 与「首次运行(文件不存在)」区分,防止默认词典覆盖用户数据
+    private(set) var loadFailed = false
     private let fileURL: URL
 
     init() {
@@ -69,6 +71,8 @@ final class VocabStore {
     /// Phase 3-A (P9=A):仅在词典完全为空时预置营销专名 + 已知错拼.
     /// 不覆盖用户已有数据 — 老用户哪怕只有一条自定义条目,默认词典都不会注入.
     private func ensureDefaultsIfEmpty() {
+        // load 失败时 entries 为空但不是首次运行 — 跳过注入,避免 save() 覆盖磁盘上的用户数据
+        guard !loadFailed else { return }
         guard entries.isEmpty else { return }
         entries = Self.defaultEntries
         save()
@@ -339,7 +343,17 @@ final class VocabStore {
             decoder.dateDecodingStrategy = .iso8601
             entries = try decoder.decode([VocabEntry].self, from: data)
         } catch {
-            VJLog.log("❌ 加载失败: \(error)", prefix: "Vocab")
+            // decode 失败 ≠ 首次运行:把损坏文件挪到 .bak 保留现场,防止后续 save() 原地覆盖
+            loadFailed = true
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let backupURL = fileURL.deletingLastPathComponent()
+                .appendingPathComponent("vocab.json.corrupt-\(timestamp).bak")
+            do {
+                try FileManager.default.moveItem(at: fileURL, to: backupURL)
+                VJLog.log("❌ 加载失败,损坏文件已备份到 \(backupURL.lastPathComponent): \(error)", prefix: "Vocab")
+            } catch let moveError {
+                VJLog.log("❌ 加载失败,且备份损坏文件也失败(原文件留在原位): \(error) / 备份错误: \(moveError)", prefix: "Vocab")
+            }
         }
     }
 }
