@@ -31,9 +31,36 @@ xcodebuild \
     -scheme VoiceJar \
     -configuration Release \
     -destination 'platform=macOS' \
+    -derivedDataPath "$BUILD_DIR/DerivedData" \
     clean build
 
-BUILT_APP="$HOME/Library/Developer/Xcode/DerivedData/VoiceJar-amglfhrjtqgcknbosdsdlmufiwri/Build/Products/Release/${APP_NAME}.app"
+BUILT_APP="$BUILD_DIR/DerivedData/Build/Products/Release/${APP_NAME}.app"
+
+# 2.5 验证构建产物版本号（从 built app 读，不读源码树 — 防止忘记 bump Info.plist）
+BUILT_SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$BUILT_APP/Contents/Info.plist")
+BUILT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$BUILT_APP/Contents/Info.plist")
+if [ "$BUILT_SHORT_VERSION" != "$VERSION" ]; then
+    echo "❌ 版本号不一致：构建产物 CFBundleShortVersionString=$BUILT_SHORT_VERSION，脚本参数=$VERSION"
+    echo "   先 bump VoiceJar/Info.plist（CFBundleShortVersionString + CFBundleVersion）再重跑。"
+    exit 1
+fi
+echo "✅ 版本号验证通过：$BUILT_SHORT_VERSION (build $BUILT_BUILD_NUMBER)"
+
+# 2.6 对比线上 appcast 最新 build 号（仅警告不阻断；网络失败则跳过）
+APPCAST_URL="https://raw.githubusercontent.com/answer2023/VoiceBee-Releases/main/appcast.xml"
+if APPCAST_XML=$(curl -fsSL --max-time 15 "$APPCAST_URL" 2>/dev/null); then
+    LIVE_BUILD=$(printf '%s' "$APPCAST_XML" | grep -o '<sparkle:version>[^<]*</sparkle:version>' | head -1 | sed 's/<[^>]*>//g' || true)
+    if [ -z "$LIVE_BUILD" ]; then
+        echo "⚠️ 无法从线上 appcast 解析 sparkle:version，跳过 build 号递增检查"
+    elif [ "$BUILT_BUILD_NUMBER" -gt "$LIVE_BUILD" ] 2>/dev/null; then
+        echo "✅ CFBundleVersion $BUILT_BUILD_NUMBER > 线上最新 $LIVE_BUILD"
+    else
+        echo "⚠️ CFBundleVersion ($BUILT_BUILD_NUMBER) 未严格大于线上 appcast 最新 sparkle:version ($LIVE_BUILD)"
+        echo "   Sparkle 用 CFBundleVersion 判定升级，客户端可能不会提示更新"
+    fi
+else
+    echo "⚠️ 拉取线上 appcast 失败，跳过 build 号递增检查：$APPCAST_URL"
+fi
 
 # 3. 打包 .dmg（用 hdiutil 简单方案；想要美化 DMG 可以改用 create-dmg）
 echo "▶️ 打包 .dmg..."
@@ -80,7 +107,7 @@ cat <<EOF
                     <ul><li>TODO: 在这里写 release notes</li></ul>
                 ]]></description>
                 <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
-                <sparkle:version>$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" VoiceJar/Info.plist)</sparkle:version>
+                <sparkle:version>${BUILT_BUILD_NUMBER}</sparkle:version>
                 <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
                 <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
                 <enclosure
