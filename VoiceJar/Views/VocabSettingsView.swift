@@ -15,6 +15,12 @@ struct VocabSettingsView: View {
     @State private var selectedIds: Set<UUID> = []
     @State private var filter: VocabFilter = .all
     @State private var showDeleteConfirm = false
+    @State private var exportError: String?
+    // 派生数据缓存 — 词条可达数千(批量导入 Rime 词典),body 每次求值都全量扫描会卡顿,
+    // 只在 entries / filter / history 变化时重算
+    @State private var displayedEntries: [VocabEntry] = []
+    @State private var filterCounts = FilterCounts()
+    @State private var candidates: [String] = []
 
     enum VocabFilter: String, CaseIterable {
         case all = "全部"
@@ -24,15 +30,43 @@ struct VocabSettingsView: View {
         case hit = "命中过"
     }
 
-    private var displayedEntries: [VocabEntry] {
+    private struct FilterCounts {
+        var all = 0
+        var enabled = 0
+        var disabled = 0
+        var suspect = 0
+        var hit = 0
+    }
+
+    private func recomputeEntryDerived() {
+        let all = appState.vocab.entries
+        var counts = FilterCounts()
+        counts.all = all.count
+        for entry in all {
+            if entry.enabled { counts.enabled += 1 } else { counts.disabled += 1 }
+            if VocabStore.isSuspect(entry.term) { counts.suspect += 1 }
+            if entry.hitCount > 0 { counts.hit += 1 }
+        }
+        filterCounts = counts
+        recomputeDisplayed()
+    }
+
+    private func recomputeDisplayed() {
         let all = appState.vocab.entries
         switch filter {
-        case .all: return all
-        case .enabled: return all.filter { $0.enabled }
-        case .disabled: return all.filter { !$0.enabled }
-        case .suspect: return all.filter { VocabStore.isSuspect($0.term) }
-        case .hit: return all.filter { $0.hitCount > 0 }
+        case .all: displayedEntries = all
+        case .enabled: displayedEntries = all.filter { $0.enabled }
+        case .disabled: displayedEntries = all.filter { !$0.enabled }
+        case .suspect: displayedEntries = all.filter { VocabStore.isSuspect($0.term) }
+        case .hit: displayedEntries = all.filter { $0.hitCount > 0 }
         }
+    }
+
+    private func recomputeCandidates() {
+        candidates = VocabStore.mineCandidates(
+            from: appState.history,
+            existing: appState.vocab.existingTermSet
+        )
     }
 
     private var displayedIds: Set<UUID> { Set(displayedEntries.map(\.id)) }
@@ -64,28 +98,23 @@ struct VocabSettingsView: View {
                 content = try appState.vocab.exportJSON()
             }
             try content.write(to: url, atomically: true, encoding: .utf8)
+            exportError = nil
         } catch {
             VJLog.log("❌ 导出失败: \(error)", prefix: "Vocab")
+            exportError = "❌ 导出失败：\(error.localizedDescription)"
         }
     }
 
     private func filterLabel(_ f: VocabFilter) -> String {
         let count: Int
         switch f {
-        case .all: count = appState.vocab.entries.count
-        case .enabled: count = appState.vocab.entries.filter { $0.enabled }.count
-        case .disabled: count = appState.vocab.entries.filter { !$0.enabled }.count
-        case .suspect: count = appState.vocab.entries.filter { VocabStore.isSuspect($0.term) }.count
-        case .hit: count = appState.vocab.entries.filter { $0.hitCount > 0 }.count
+        case .all: count = filterCounts.all
+        case .enabled: count = filterCounts.enabled
+        case .disabled: count = filterCounts.disabled
+        case .suspect: count = filterCounts.suspect
+        case .hit: count = filterCounts.hit
         }
         return "\(f.rawValue) \(count)"
-    }
-
-    private var candidates: [String] {
-        VocabStore.mineCandidates(
-            from: appState.history,
-            existing: appState.vocab.existingTermSet
-        )
     }
 
     var body: some View {
@@ -170,6 +199,14 @@ struct VocabSettingsView: View {
                             .buttonStyle(.plain)
                             .foregroundStyle(.blue)
                             .disabled(appState.vocab.entries.isEmpty)
+
+                            if let exportError {
+                                Text(exportError)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.red)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
 
                             Spacer()
                         }
@@ -273,7 +310,7 @@ struct VocabSettingsView: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.vertical, 12)
                             } else {
-                                VStack(spacing: 4) {
+                                LazyVStack(spacing: 4) {
                                     ForEach(displayedEntries) { entry in
                                         VocabRow(
                                             entry: entry,
@@ -349,6 +386,16 @@ struct VocabSettingsView: View {
             }
             .padding(24)
         }
+        .onChange(of: appState.vocab.entries, initial: true) {
+            recomputeEntryDerived()
+            recomputeCandidates()
+        }
+        .onChange(of: filter) {
+            recomputeDisplayed()
+        }
+        .onChange(of: appState.history) {
+            recomputeCandidates()
+        }
         .sheet(isPresented: $showImport) {
             VocabImportSheet(vocab: appState.vocab, isPresented: $showImport)
         }
@@ -363,21 +410,31 @@ private struct VocabImportSheet: View {
     @State private var resultMessage: String?
     @State private var includeSuspect: Bool = false
     @State private var showSuspectList: Bool = false
+    // 解析结果缓存 — Rime 词典可达 10^4-10^5 行,不能每次 body 求值都全量 parse,
+    // 只在 inputText 变化后 debounce 一次解析 + 单遍分拣 clean / suspect
+    @State private var cleanEntries: [VocabEntry] = []
+    @State private var suspectEntries: [VocabEntry] = []
+    @State private var parseTask: Task<Void, Never>?
 
-    private var parsedPreview: [VocabEntry] {
-        VocabStore.parseImport(inputText)
-    }
-
-    private var cleanEntries: [VocabEntry] {
-        parsedPreview.filter { !VocabStore.isSuspect($0.term) }
-    }
-
-    private var suspectEntries: [VocabEntry] {
-        parsedPreview.filter { VocabStore.isSuspect($0.term) }
-    }
+    private var parsedCount: Int { cleanEntries.count + suspectEntries.count }
+    private var importCount: Int { includeSuspect ? parsedCount : cleanEntries.count }
 
     private var entriesToImport: [VocabEntry] {
-        includeSuspect ? parsedPreview : cleanEntries
+        includeSuspect ? cleanEntries + suspectEntries : cleanEntries
+    }
+
+    private func reparse(_ text: String) {
+        var clean: [VocabEntry] = []
+        var suspect: [VocabEntry] = []
+        for entry in VocabStore.parseImport(text) {
+            if VocabStore.isSuspect(entry.term) {
+                suspect.append(entry)
+            } else {
+                clean.append(entry)
+            }
+        }
+        cleanEntries = clean
+        suspectEntries = suspect
     }
 
     var body: some View {
@@ -431,7 +488,7 @@ private struct VocabImportSheet: View {
 
                 Spacer()
 
-                Button("导入 \(entriesToImport.count) 个") {
+                Button("导入 \(importCount) 个") {
                     let result = vocab.addBatch(entriesToImport)
                     resultMessage = "✅ 新增 \(result.added) 个，跳过 \(result.skipped) 个重复"
                     if result.added > 0 {
@@ -440,14 +497,14 @@ private struct VocabImportSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(entriesToImport.isEmpty)
+                .disabled(importCount == 0)
             }
 
             // 解析摘要 + 可疑条目处理
-            if !parsedPreview.isEmpty {
+            if parsedCount > 0 {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("解析到 \(parsedPreview.count) 个，可用 \(cleanEntries.count) 个")
+                        Text("解析到 \(parsedCount) 个，可用 \(cleanEntries.count) 个")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         if !suspectEntries.isEmpty {
@@ -502,6 +559,14 @@ private struct VocabImportSheet: View {
         }
         .padding(20)
         .frame(width: 520, height: 480)
+        .onChange(of: inputText) { _, newText in
+            parseTask?.cancel()
+            parseTask = Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                reparse(newText)
+            }
+        }
     }
 
     private func pickFile() {

@@ -4,6 +4,7 @@ import SwiftUI
 struct HistoryView: View {
     @Environment(AppState.self) private var appState
     @State private var polishingIds: Set<UUID> = []
+    @State private var rowErrors: [UUID: String] = [:]
     private let polishService = PolishService()
 
     var body: some View {
@@ -48,7 +49,9 @@ struct HistoryView: View {
                             HistoryRow(
                                 record: record,
                                 isPolishing: polishingIds.contains(record.id),
-                                onRePolish: { rePolish(record) }
+                                errorText: rowErrors[record.id],
+                                onRePolish: { rePolish(record) },
+                                onInsert: { insert(record) }
                             )
                         }
                     }
@@ -63,6 +66,7 @@ struct HistoryView: View {
         let snapshot = appState.polishSettings.snapshot
         guard snapshot.engine != .none else { return }
         polishingIds.insert(record.id)
+        rowErrors[record.id] = nil
         let vocabTerms = appState.vocab.activeTerms
         let activeStyle = style ?? appState.outputStyle.defaultStyle
         Task {
@@ -82,6 +86,26 @@ struct HistoryView: View {
                 }
             } catch {
                 VJLog.log("❌ 重新润色失败: \(error)", prefix: "History")
+                let message = "重新润色失败：\(error.localizedDescription)"
+                await MainActor.run {
+                    showRowError(record.id, message)
+                }
+            }
+        }
+    }
+
+    private func insert(_ record: TranscriptionRecord) {
+        if !TextInjector.inject(record.polishedText) {
+            showRowError(record.id, "缺少辅助功能权限，文本已复制到剪贴板，可手动 ⌘V 粘贴")
+        }
+    }
+
+    /// 行内瞬态错误提示 — 4 秒后自动消失(若期间未被新消息覆盖)
+    private func showRowError(_ id: UUID, _ message: String) {
+        rowErrors[id] = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            if rowErrors[id] == message {
+                rowErrors[id] = nil
             }
         }
     }
@@ -91,7 +115,9 @@ struct HistoryView: View {
 struct HistoryRow: View {
     let record: TranscriptionRecord
     let isPolishing: Bool
+    let errorText: String?
     let onRePolish: () -> Void
+    let onInsert: () -> Void
     @State private var isHovering = false
     @State private var showCopied = false
     @State private var showCopiedRaw = false
@@ -169,7 +195,7 @@ struct HistoryRow: View {
 
                         // 重新上屏
                         Button {
-                            TextInjector.inject(record.polishedText)
+                            onInsert()
                         } label: {
                             Image(systemName: "text.insert")
                                 .font(.system(size: 11))
@@ -194,6 +220,14 @@ struct HistoryRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // 瞬态错误提示（重新润色失败 / 无辅助功能权限）
+            if let errorText {
+                Text(errorText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
