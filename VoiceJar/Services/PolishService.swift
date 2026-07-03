@@ -242,33 +242,46 @@ actor PolishService {
             throw PolishError.networkError("无效的响应")
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw PolishError.apiError(httpResponse.statusCode, "流式请求失败")
+            // 排障靠 body(401 的 invalid key / 429 的重试提示),只取前 4KB 防大响应
+            var bodyData = Data()
+            do {
+                for try await byte in bytes {
+                    bodyData.append(byte)
+                    if bodyData.count >= 4096 { break }
+                }
+            } catch {} // body 读取失败不遮蔽状态码错误
+            let body = String(decoding: bodyData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw PolishError.apiError(httpResponse.statusCode, body.isEmpty ? "流式请求失败" : body)
         }
 
         var accumulated = ""
         let engine = settings.engine
 
         for try await line in bytes.lines {
-            if let token = Self.parseStreamLine(line, engine: engine) {
+            if let token = try Self.parseStreamLine(line, engine: engine) {
                 accumulated += token
                 onChunk(accumulated)
             }
         }
 
         let result = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
-        return result.isEmpty ? text : result
+        // 流结束却一个 token 都没收到 = 润色失败 —— 抛错走上层"回退原文"路径,不能记成成功
+        guard !result.isEmpty else {
+            throw PolishError.parseError("流式响应结束但未收到任何内容")
+        }
+        return result
     }
 
     // MARK: - SSE Parsing
 
-    private static func parseStreamLine(_ line: String, engine: PolishEngine) -> String? {
+    private static func parseStreamLine(_ line: String, engine: PolishEngine) throws -> String? {
         switch engine {
         case .ollama, .ollamaCloud:
             return parseOllamaChunk(line)
         case .claude:
-            return parseClaudeChunk(line)
+            return try parseClaudeChunk(line)
         case .deepseek, .gemini, .openaiCompatible:
-            return parseOpenAIChunk(line)
+            return try parseOpenAIChunk(line)
         case .none:
             return nil
         }
@@ -285,25 +298,41 @@ actor PolishService {
     }
 
     /// Claude SSE: data: {"type":"content_block_delta","delta":{"text":"token"}}
-    private static func parseClaudeChunk(_ line: String) -> String? {
+    private static func parseClaudeChunk(_ line: String) throws -> String? {
         guard line.hasPrefix("data: ") else { return nil }
         let jsonStr = String(line.dropFirst(6))
         guard let data = jsonStr.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              json["type"] as? String == "content_block_delta",
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        // 200 之后仍可能推 in-stream error 帧(如 overloaded_error),不能当空 delta 吞掉
+        if json["type"] as? String == "error" {
+            let message = (json["error"] as? [String: Any])?["message"] as? String ?? jsonStr
+            throw PolishError.apiError(200, message)
+        }
+        guard json["type"] as? String == "content_block_delta",
               let delta = json["delta"] as? [String: Any],
               let text = delta["text"] as? String else { return nil }
         return text
     }
 
     /// OpenAI SSE: data: {"choices":[{"delta":{"content":"token"}}]}
-    private static func parseOpenAIChunk(_ line: String) -> String? {
-        guard line.hasPrefix("data: ") else { return nil }
+    private static func parseOpenAIChunk(_ line: String) throws -> String? {
+        guard line.hasPrefix("data: ") else {
+            // 部分兼容网关 200 后直接推顶层 error JSON(无 data: 前缀),不能当空行吞掉
+            if let data = line.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = json["error"] as? [String: Any] {
+                throw PolishError.apiError(200, (error["message"] as? String) ?? line)
+            }
+            return nil
+        }
         let jsonStr = String(line.dropFirst(6))
         guard jsonStr != "[DONE]",
               let data = jsonStr.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let error = json["error"] as? [String: Any] {
+            throw PolishError.apiError(200, (error["message"] as? String) ?? jsonStr)
+        }
+        guard let choices = json["choices"] as? [[String: Any]],
               let first = choices.first,
               let delta = first["delta"] as? [String: Any],
               let content = delta["content"] as? String else { return nil }
