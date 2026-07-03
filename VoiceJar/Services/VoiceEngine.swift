@@ -401,8 +401,9 @@ class VoiceEngine {
 
         appState.isRecording = false
 
-        // 等一小段时间让最终结果回来，然后处理润色
-        let rawText = appState.liveText
+        // liveText 此刻是最后一次 onPartial 的未矫正快照(onFinal 的矫正在 fire-and-forget
+        // stop 之后才到达,且只覆盖显示态),注入/润色/历史要拿到正确专名必须在此处矫正
+        let rawText = VocabPostprocessor.apply(appState.liveText, vocab: appState.vocab.entries)
         log("📝 当前文本: \(rawText)")
 
         guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
