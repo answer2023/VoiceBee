@@ -39,29 +39,21 @@ struct TextInjector {
         simulatePaste()
 
         // 4. 延迟恢复原剪贴板内容
-        //    监测 changeCount 变化确认粘贴完成，最多等 1.5 秒
+        //    macOS 没有 API 能观测"目标 App 已消费粘贴"——changeCount 只在写入时递增,
+        //    ⌘V 读取不改变它。恢复只能是固定延迟启发式,窗口取 3 秒覆盖慢速 App(Electron / 高负载)
         let changeCount = pasteboard.changeCount
-        restoreClipboard(previous: previousContents, expectedChangeCount: changeCount, attempt: 0)
+        restoreClipboard(previous: previousContents, expectedChangeCount: changeCount)
         return true
     }
 
-    /// 等待目标 App 消费粘贴事件后恢复剪贴板
-    private static func restoreClipboard(previous: String?, expectedChangeCount: Int, attempt: Int) {
-        let delay: TimeInterval = attempt == 0 ? 0.15 : 0.3
-        let maxAttempts = 4 // 最多 0.15 + 0.3*3 = 1.05秒
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+    /// 固定延迟后恢复剪贴板(粘贴消费不可观测,见 inject 第 4 步注释)
+    private static func restoreClipboard(previous: String?, expectedChangeCount: Int) {
+        // changeCount 单调递增,窗口结束时单次检查等价于逐次轮询
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             let pasteboard = NSPasteboard.general
             // 如果 changeCount 变了，说明其他程序（或用户）修改了剪贴板，不再恢复
             guard pasteboard.changeCount == expectedChangeCount else { return }
 
-            // 前几次检查：给慢速 App 更多时间
-            if attempt < maxAttempts - 1 {
-                restoreClipboard(previous: previous, expectedChangeCount: expectedChangeCount, attempt: attempt + 1)
-                return
-            }
-
-            // 最后一次：恢复原内容
             if let previous {
                 pasteboard.clearContents()
                 pasteboard.setString(previous, forType: .string)
@@ -131,7 +123,7 @@ struct TextInjector {
 
         // 4. 恢复剪贴板
         let changeCount = pasteboard.changeCount
-        restoreClipboard(previous: previousContents, expectedChangeCount: changeCount, attempt: 0)
+        restoreClipboard(previous: previousContents, expectedChangeCount: changeCount)
     }
 
     /// 模拟 ⌘Z 撤销
