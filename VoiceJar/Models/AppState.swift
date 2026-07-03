@@ -20,6 +20,8 @@ class AppState {
     var liveText = ""
     var statusMessage = ""
     var errorMessage: String?
+    /// loadHistory() 里的赋值会触发 didSet→saveHistory(),启动时把刚读到的内容原样重写一遍 —— load 期间必须压制持久化
+    private var isLoadingHistory = false
     var history: [TranscriptionRecord] = [] {
         didSet { saveHistory() }
     }
@@ -48,6 +50,7 @@ class AppState {
     }
 
     private func saveHistory() {
+        guard !isLoadingHistory else { return }
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -61,15 +64,24 @@ class AppState {
 
     private func loadHistory() {
         guard FileManager.default.fileExists(atPath: Self.historyFileURL.path) else { return }
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
         do {
             let data = try Data(contentsOf: Self.historyFileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            let loaded = try decoder.decode([TranscriptionRecord].self, from: data)
-            // 直接赋值底层 _history 避免触发 didSet 重复保存
-            history = loaded
+            history = try decoder.decode([TranscriptionRecord].self, from: data)
         } catch {
-            VJLog.log("❌ 加载失败: \(error)", prefix: "History")
+            // decode 失败:把损坏文件挪到 .bak 保留现场,防止下一次 saveHistory() 原地覆盖
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let backupURL = Self.historyFileURL.deletingLastPathComponent()
+                .appendingPathComponent("history.json.corrupt-\(timestamp).bak")
+            do {
+                try FileManager.default.moveItem(at: Self.historyFileURL, to: backupURL)
+                VJLog.log("❌ 加载失败,损坏文件已备份到 \(backupURL.lastPathComponent): \(error)", prefix: "History")
+            } catch let moveError {
+                VJLog.log("❌ 加载失败,且备份损坏文件也失败(原文件留在原位): \(error) / 备份错误: \(moveError)", prefix: "History")
+            }
         }
     }
 
@@ -231,4 +243,32 @@ struct TranscriptionRecord: Identifiable, Codable, Equatable {
     var polishedText: String
     let timestamp: Date
     let duration: TimeInterval
+
+    init(
+        id: UUID = UUID(),
+        rawText: String,
+        polishedText: String,
+        timestamp: Date,
+        duration: TimeInterval
+    ) {
+        self.id = id
+        self.rawText = rawText
+        self.polishedText = polishedText
+        self.timestamp = timestamp
+        self.duration = duration
+    }
+
+    // 旧 history.json 缺字段 / 单条记录字段异常时,用 decodeIfPresent 全量容错(仅 rawText 必填)
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.rawText = try c.decode(String.self, forKey: .rawText)
+        self.polishedText = try c.decodeIfPresent(String.self, forKey: .polishedText) ?? ""
+        self.timestamp = try c.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        self.duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, rawText, polishedText, timestamp, duration
+    }
 }
