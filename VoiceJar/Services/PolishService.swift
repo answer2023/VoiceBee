@@ -150,7 +150,8 @@ actor PolishService {
 
         var body: [String: Any] = [
             "model": settings.model,
-            "max_tokens": 1024,
+            // 4096 = 全系 Claude 模型都支持的输出上限(用户可能手填旧 model,不能开更高)
+            "max_tokens": 4096,
             "system": prompt,
             "messages": [
                 ["role": "user", "content": text]
@@ -165,6 +166,10 @@ actor PolishService {
                   let first = content.first,
                   let resultText = first["text"] as? String else {
                 throw PolishError.parseError("无法解析 Claude 响应")
+            }
+            // 截断的润色文本不能上屏 —— 抛错走上层"回退原文"路径
+            if let stopReason = json["stop_reason"] as? String, stopReason == "max_tokens" {
+                throw PolishError.parseError("润色输出超过 max_tokens 被截断")
             }
             return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
