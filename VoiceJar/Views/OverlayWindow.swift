@@ -8,6 +8,13 @@ class OverlayWindow {
     private var hostingView: NSHostingView<OverlayContentView>?
     private var contentModel = OverlayContentModel()
 
+    // show() 时定下的锚定信息，供 resizeAndReposition 重复使用：
+    // - anchorScreen: caret 所在屏幕，resize 时重新套用它的 visibleFrame clamp
+    // - anchorTopY: 浮窗顶边的 AppKit Y。AppKit origin 在左下,高度增长会向上扩展;
+    //   锚定顶边让气泡向下增长,不盖住光标正在听写的文本行
+    private var anchorScreen: NSScreen?
+    private var anchorTopY: CGFloat?
+
     func show() {
         if window == nil {
             createWindow()
@@ -153,6 +160,10 @@ class OverlayWindow {
         } else {
             window.setFrameOrigin(point)
         }
+
+        // 记录锚定信息，resizeAndReposition 据此保持顶边不动 + 不超出屏幕
+        anchorScreen = targetScreen
+        anchorTopY = window.frame.maxY
     }
 
     private func resizeAndReposition() {
@@ -173,6 +184,15 @@ class OverlayWindow {
         var frame = window.frame
         frame.size.width = newWidth
         frame.size.height = newHeight
+        // 顶边锚定：origin 在左下,高度增长时把 origin.y 下移,让气泡向下扩展
+        if let topY = anchorTopY {
+            frame.origin.y = topY - newHeight
+        }
+        // 重新套用 show() 时的 visibleFrame clamp，防止宽度增长超出屏幕右缘 / 高度增长顶出屏幕
+        if let visible = anchorScreen?.visibleFrame {
+            frame.origin.x = min(max(frame.origin.x, visible.minX + 10), visible.maxX - newWidth - 10)
+            frame.origin.y = min(max(frame.origin.y, visible.minY + 10), visible.maxY - newHeight - 10)
+        }
         window.setFrame(frame, display: true, animate: false)
     }
 }
