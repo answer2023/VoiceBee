@@ -22,6 +22,11 @@ final class WhisperKitProvider: ASRProvider {
     private var streamer: AudioStreamTranscriber?
     private var streamTask: Task<Void, Never>?
 
+    /// 过滤旧 session 残余回调(对照 SFSpeechProvider.activeSessionToken):
+    /// transcribe loop 在 stopStreamTranscription 后异步退出,快速停-启时旧 transcriber
+    /// 的 stateChangeCallback 仍会 hop 到主 actor,token 不匹配即丢弃
+    private var activeSessionToken: UUID?
+
     // MARK: - 累积文本
 
     /// 已确认段累加(随 confirmedSegments 增长)— 稳定文本,fire onFinal 的源
@@ -144,9 +149,11 @@ final class WhisperKitProvider: ASRProvider {
             throw ASRError.modelMissing
         }
 
-        // 重置状态 + 接 callback
+        // 重置状态 + 接 callback;轮换 session token,旧 session 残余回调落地即被过滤
         confirmedAccum = ""
         liveTail = ""
+        let token = UUID()
+        activeSessionToken = token
         self.onPartial = onPartial
         self.onFinal = onFinal
         self.onError = onError
@@ -185,7 +192,8 @@ final class WhisperKitProvider: ASRProvider {
                     self?.processStateChange(
                         confirmed: confirmed,
                         unconfirmed: unconfirmed,
-                        current: current
+                        current: current,
+                        sessionToken: token
                     )
                 }
             }
@@ -202,17 +210,27 @@ final class WhisperKitProvider: ASRProvider {
             } catch {
                 let nsError = error as NSError
                 await MainActor.run {
-                    self?.onError?(.underlying(nsError))
+                    // 旧 session 的残余 error 不投递给新 session
+                    guard let self, self.activeSessionToken == token else { return }
+                    self.onError?(.underlying(nsError))
                 }
             }
         }
     }
 
     func stopStreaming() async {
+        // 入口一次性捕获本次 stop 针对的 session(streamer + token)— VoiceEngine 是
+        // fire-and-forget 调用,await 挂起期间可能发生快速停-启(新 session 已就位),
+        // resume 后绝不能操作新 session 的 streamer / 状态 / callback
+        let stoppingToken = activeSessionToken
+        guard let streamer, stoppingToken != nil else { return }
+
         // W4 主路:让 transcribe loop 自然退出(state.isRecording = false)
-        if let streamer {
-            await streamer.stopStreamTranscription()
-        }
+        await streamer.stopStreamTranscription()
+
+        // 挂起期间 token 已轮换(快速重启 / cancel)→ fullTranscript 与 onFinal
+        // 都已属于新 session,此处 fire 会污染新 session,直接跳过
+        guard stoppingToken == activeSessionToken else { return }
 
         // W5:短录音(<12s)永远没 confirmed segment,强制把当前 fullTranscript 提升为 final
         // 即使有 confirmed segment,这里 fire 一次让 VoiceEngine 拿到最后快照(processStateChange
@@ -225,6 +243,8 @@ final class WhisperKitProvider: ASRProvider {
     }
 
     func cancel() {
+        // token 置空:已排队/后续到达的旧 session 回调在主 actor 落地即被过滤
+        activeSessionToken = nil
         // W4 兜底:stopStreamTranscription(主路) + streamTask.cancel(兜底)
         if let streamer {
             // 同步 cancel,不能 await,fire-and-forget Task
@@ -243,8 +263,10 @@ final class WhisperKitProvider: ASRProvider {
 
     // MARK: - Internal
 
-    /// 处理 transcriber state 变化(在主 actor 上)
-    private func processStateChange(confirmed: String, unconfirmed: String, current: String) {
+    /// 处理 transcriber state 变化(在主 actor 上)— sessionToken 过滤旧 session 残余回调
+    private func processStateChange(confirmed: String, unconfirmed: String, current: String, sessionToken: UUID) {
+        guard sessionToken == activeSessionToken else { return }
+
         // 1. confirmed 段变化 → 更新累加 + fire onFinal(增量)
         if !confirmed.isEmpty, confirmed != confirmedAccum {
             confirmedAccum = confirmed
