@@ -26,7 +26,7 @@
 
 `project.yml` **不放** `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`(整个仓库 grep 不到这两个 key)。改版本号只动 Info.plist;改 project.yml 没用。
 
-`scripts/release.sh:78` 用 `/usr/libexec/PlistBuddy -c "Print CFBundleVersion" VoiceJar/Info.plist` 印证此唯一来源。
+`scripts/release.sh` 自 2026-07-04 起从**构建产物**(`$BUILT_APP/Contents/Info.plist`)读版本号并与脚本参数强校验(防忘 bump),不再读源码树。
 
 ---
 
@@ -148,8 +148,9 @@ git tag vX.Y.Z && git push --tags  # 主仓库也打 tag,方便回溯
 - **当前未公证**:v1.2.1、v1.2.2 的 DMG 都没 staple ticket(`xcrun stapler validate` 验证)
 - Sparkle 自动更新不受影响(EdDSA 独立)
 - 影响:**新用户首次从浏览器下载 DMG 双击安装**会被 Gatekeeper 拦,需要"右键 → 打开"绕过。README 已写
-- `scripts/release.sh:48-55` 写好了 notarytool 流程,需要 `voicebee-notary` keychain profile(目前未配置)
-- Follow-up:配置公证流程后,在 release.sh 里默认开启
+- `scripts/release.sh` 第 4 步已写好 notarytool 流程,检测到 `voicebee-notary` keychain profile 即自动启用(目前未配置,自动跳过)
+- **2026-07-04 拍板**:`ENABLE_HARDENED_RUNTIME`(公证硬性前置,当前 false)留到配 Developer ID 证书时一起打开;entitlements 已备好 `audio-input`+`network.client`。完整前置清单见 `docs/RELEASE.md`「公证」节
+- 同日删除了 release.yml(指向 private 仓库的断路,见踩坑表),发版唯一路径 = release.sh 手动流程
 
 ---
 
@@ -163,6 +164,7 @@ git tag vX.Y.Z && git push --tags  # 主仓库也打 tag,方便回溯
 | appcast.xml `length` 不准 | Sparkle 验签失败,客户端"更新失败" | 用 `sign_update` 输出的 length(它就是真实 DMG 字节数) |
 | 换了 EdDSA key | 旧版用户拒收新签名,自动更新永久断 | **永远不要换 SUPublicEDKey**;私钥丢了的应急见 Sparkle 文档 |
 | pushed appcast 后 5 分钟内客户端没看到 | raw CDN 缓存 | 等,或客户端"立即检查更新"会绕过(Sparkle 加 cache-buster 参数) |
+| release.yml 自动发版(双仓库改造前遗留) | release 建在 private 仓库重演 404;macos-14 装不上 Xcode 16.3;要求 Sparkle 私钥进 GitHub Secrets | 2026-07-04 整个删除,发版走 release.sh;若重建自动化以 docs/RELEASE.md 双仓库模型为准 |
 
 ### git proxy 死端口(`HTTPS_PROXY=` 也覆盖不掉)
 
@@ -241,6 +243,11 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
 - **治标**(短期):polish prompt 加专名错例 few-shot(`input contains "vocab" but vocabulary says "VoiceBee" → output VoiceBee`)— 但需要预先收集已知 ASR 错例,维护成本高
 - **治标**(中期):每个英文专名在 vocab 里拆多个变体(`VoiceBee` + `Voice Bee` + `voice bee`)给 contextualStrings 更多 anchor — 但 SFSpeech 上限仍在
 
+**后续进展(2026-07-04)**:
+- WhisperKit 引擎已上线(设置里可选,默认仍 SFSpeech);Phase 3-A `VocabPostprocessor` 在 ASR 输出层做 alias 精确 + Levenshtein 模糊纠错
+- ⚠️ 深度审计发现 Phase 3-A 上线后**主链路一直被绕过**:矫正只写显示态,注入/润色/历史拿的是未矫正 partial 快照 — 已修(commit `cbe63ad`,矫正移到 `stopRecordingAndProcess` 捕获文本处就地执行)
+- 上文诊断引用的 `SpeechRecognizer.swift:85-87` 是历史现场,该文件 Phase 2E-b 已删;contextualStrings 注入现在在 `SFSpeechProvider` 内
+
 ### 重装后 Accessibility 权限需重启 app 才生效
 
 **症状**:替换 `/Applications/VoiceBee.app`(覆盖 build)后,即使系统设置里 Accessibility 已授权,VoiceBee 仍需 quit + 重新打开才能用 hotkey;否则可能 `dispatch_assert` 崩溃(AXIsProcessTrusted = false → dispatch_assert)。
@@ -277,15 +284,15 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
 - Apple Silicon only(VoiceBee 已 arm64-only,不影响)
 - 首次启动需下载模型(增加 onboarding 步骤)
 
-**实施分支**:`feature/whisperkit-asr`
+**实施分支**:~~`feature/whisperkit-asr`~~ 已并入 `feature/customizable-hotkey` 谱系(phase2 系列 commit:PoC → ASRProvider 协议 → 引擎切换 UI → 删旧 SpeechRecognizer)
 
-**进度跟踪**:
+**进度跟踪**(2026-07-04 更新):
 - [x] 诊断完成(2026-05-11)
-- [ ] 技术调研 + 设计(进行中,`docs/whisperkit-research.md`)
-- [ ] PoC 集成(SPM + 最小调用 demo)
-- [ ] 抽象层 `ASRProvider` protocol(让 SFSpeech / WhisperKit 可切换)
-- [ ] UI 引擎选择(设置面板加 ASR engine 选项)
-- [ ] 模型下载管理(首次启动引导 / 后台预热 / 切模型 UI)
-- [ ] alpha 测试(双轨并行一段时间收集准确率对比)
+- [x] 技术调研 + 设计(`docs/whisperkit-research.md` + `docs/asr-provider-design.md`)
+- [x] PoC 集成(SPM + 最小调用 demo,结果见 `docs/whisperkit-poc-results.md`)
+- [x] 抽象层 `ASRProvider` protocol(SFSpeechProvider / WhisperKitProvider 双实现)
+- [x] UI 引擎选择(Phase 2F:设置面板 ASR engine 选项 + prepare 进度显示)
+- [x] 模型下载管理(后台预热 prepare + 进度事件 + 失败自动回退 sfSpeech)
+- [ ] alpha 测试(双轨并行中:WhisperKit 可选、SFSpeech 仍是默认,`asr_engine` 键)
 - [ ] 默认开关(默认 WhisperKit / SFSpeech 作 fallback)
 
