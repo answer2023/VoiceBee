@@ -60,4 +60,4 @@ schemes:
     test:
       targets:
         - VoiceJarTests
-      gatherCoverageData: false
+      gatherCoverageData: true

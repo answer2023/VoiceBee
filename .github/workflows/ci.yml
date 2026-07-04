@@ -43,6 +43,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             clean build
 
+      # 复用同一 derivedDataPath,增量跑测试不重复编译
+      - name: Test
+        run: |
+          xcodebuild \
+            -project VoiceJar.xcodeproj \
+            -scheme VoiceJar \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
   lint:
     # SwiftLint 不依赖 Xcode；统一 macos-15 简化 runner 矩阵
     runs-on: macos-15
