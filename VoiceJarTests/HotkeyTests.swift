@@ -16,19 +16,20 @@ final class HotkeyTests: XCTestCase {
 
     /// 隔离的 defaults — 每个测试用独立 suite,避免污染主进程
     private var defaults: UserDefaults!
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
-        let suiteName = "HotkeyTests-\(UUID().uuidString)"
-        UserDefaults().removePersistentDomain(forName: suiteName)
+        suiteName = "HotkeyTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
     }
 
     override func tearDown() {
-        if let name = defaults.dictionaryRepresentation().keys.first { _ in true } as String? {
-            _ = name
-        }
+        // 真正清理 suite 的 persistent domain,避免每次跑测试残留一个 plist
+        defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
+        suiteName = nil
         super.tearDown()
     }
 
