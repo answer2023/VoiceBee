@@ -55,6 +55,9 @@ final class StatsStore {
         d.set(totalSeconds, forKey: "stats_totalSeconds")
         if let f = firstUsedAt {
             d.set(f, forKey: "stats_firstUsedAt")
+        } else {
+            // reset() 后必须清掉,否则重启 load() 会让旧的首用日期复活
+            d.removeObject(forKey: "stats_firstUsedAt")
         }
     }
 
