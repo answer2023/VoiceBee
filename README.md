@@ -34,7 +34,7 @@
 
 VoiceBee is a native macOS voice input app for any text field — ChatGPT, Claude, Cursor, Notion, your editor, your terminal. Hold a key, speak, release. The transcript appears at the cursor.
 
-**The differentiator: it can run with zero network.** VoiceBee uses Apple's built-in speech recognizer for transcription and supports Ollama for local LLM polishing — meaning the entire pipeline can stay on your machine. No API keys, no audio uploads, no vendor account.
+**The differentiator: it can run with zero network.** VoiceBee uses Apple's built-in speech recognizer for transcription (default) or a fully local WhisperKit Whisper model (opt-in via settings), and supports Ollama for local LLM polishing — meaning the entire pipeline can stay on your machine. No API keys, no audio uploads, no vendor account.
 
 You can also point it at Claude / DeepSeek / Gemini / OpenAI-compatible endpoints if you want a stronger polish model — but you don't have to.
 
@@ -42,7 +42,7 @@ You can also point it at Claude / DeepSeek / Gemini / OpenAI-compatible endpoint
 
 | Tool | Voice → Text | LLM Polish | Setup | Local-only mode |
 |---|---|---|---|---|
-| **VoiceBee** | Apple SFSpeech (built-in, free) | Ollama / Claude / DeepSeek / Gemini / OpenAI | Zero config | ✅ Apple ASR + Ollama |
+| **VoiceBee** | Apple SFSpeech (built-in, free) or WhisperKit (local Whisper, opt-in) | Ollama / Claude / DeepSeek / Gemini / OpenAI | Zero config | ✅ Apple ASR or WhisperKit + Ollama |
 | OpenLess | Volcengine cloud ASR | Ark / DeepSeek / OpenAI | Requires cloud API keys | ❌ |
 | Wispr Flow | Cloud (proprietary) | Cloud (proprietary) | Subscription account | ❌ |
 | Typeless | Cloud (proprietary) | Cloud (proprietary) | Subscription account | ❌ |
@@ -50,11 +50,14 @@ You can also point it at Claude / DeepSeek / Gemini / OpenAI-compatible endpoint
 
 ## Features
 
-- **Hold-to-talk hotkey**: Fn (single key) or any combo. Double-tap Fn switches polish mode on the fly.
-- **Two polish modes**: instant (light correction) vs. structured (deep cleanup with reordering).
+- **Two ASR engines**: Apple SFSpeech (default, zero setup) or WhisperKit large-v3 (fully local Whisper model, downloaded and managed in-app) — switchable in settings.
+- **Customizable recording hotkey**: any single modifier (Fn, left/right ⌘ ⌥ ⇧ ⌃) or key combo, in hold (push-to-talk) or toggle (click to start/stop, 30-min safety timeout) mode, with system-shortcut conflict warnings. Double-tap the modifier switches output style on the fly.
+- **Four output styles**: raw (punctuation only) → light (filler removal) → structured (bullet reorganization) → formal (professional wording).
 - **Streaming**: text shows up as it's being polished — no waiting for the whole response.
-- **Translate hotkey** (⌥T): select text in any app, hit the hotkey, get a translation in your clipboard.
-- **Vocab dictionary**: add proper nouns (Claude, ChatGPT, your team's names) — they're injected as ASR contextual hints AND polish-time semantic prompts.
+- **Translate hotkey** (⌥T default, customizable): select text in any app, hit the hotkey, get a translation in your clipboard.
+- **Dictation translation**: tap a marker key (Shift / Ctrl / Option / Fn) while recording to route that dictation through translation into your target language.
+- **Vocab dictionary**: add proper nouns (Claude, ChatGPT, your team's names) — they're injected as ASR contextual hints, polish-time semantic prompts, AND a post-ASR spelling corrector (exact alias match + Levenshtein fuzzy) that fixes misheard proper nouns before polish.
+- **Repeat last injection** (⌥⇧V default): re-paste the last dictation result.
 - **Auto-learn vocab**: VoiceBee mines candidate proper nouns from your history, you add them with one click.
 - **Usage stats**: total chars, time saved (vs 60-cpm typing baseline), top hit terms.
 - **Sparkle auto-update**: in-app "Check for Updates" button + scheduled background checks.
@@ -66,7 +69,9 @@ You can also point it at Claude / DeepSeek / Gemini / OpenAI-compatible endpoint
 
 ### Install
 
-Download the latest `.dmg` from [Releases](../../releases) and drag to `/Applications`.
+Download the latest `.dmg` from [VoiceBee-Releases](https://github.com/answer2023/VoiceBee-Releases/releases) and drag to `/Applications`.
+
+**Apple Silicon required** (the build is arm64-only). The DMG is not notarized yet, so on first open Gatekeeper may block it — right-click the app → Open once to bypass.
 
 On first launch, grant the permissions VoiceBee asks for:
 1. **Microphone** — for recording.
@@ -77,11 +82,11 @@ Open Settings (click the menu bar mic icon) → fill in the AI engine you want f
 
 ### Build from source
 
-Requires macOS 14+, Xcode 16+, and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Requires macOS 14+, Xcode 16.3+, and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```bash
 brew install xcodegen
-git clone https://github.com/clearsky/VoiceBee.git
+git clone https://github.com/answer2023/VoiceBee.git
 cd VoiceBee
 xcodegen
 xcodebuild -project VoiceJar.xcodeproj -scheme VoiceJar -configuration Release build
@@ -92,54 +97,55 @@ The built `.app` is signed with an ad-hoc signature suitable for local use.
 ## Architecture
 
 ```
-VoiceJarMain        Single-instance lock + NSApplication lifecycle
-VoiceJarDelegate    Menu bar, settings windows, permission requests
-VoiceEngine         Coordinator: hotkey → record → ASR stream → polish → inject
-HotkeyManager       CGEventTap (self-healing); Fn single key + double-tap detection
-AudioRecorder       AVAudioEngine 16 kHz PCM with streaming buffer callback
-SpeechRecognizer    SFSpeechRecognizer streaming + contextualStrings injection
-PolishService       Ollama / Claude / DeepSeek / Gemini / OpenAI-compatible (SSE streaming)
-TextInjector        Clipboard + ⌘V with changeCount-aware restore
-VocabStore          ~/Library/Application Support/VoiceBee/vocab.json
-StatsStore          UserDefaults cumulative counters
-UpdaterManager      Sparkle 2 wrapper
+VoiceJarMain           Single-instance lock + NSApplication lifecycle
+VoiceJarDelegate       Menu bar, settings windows, permission requests
+VoiceEngine            Coordinator: hotkey → ASR stream → vocab-correct → polish → inject
+HotkeyManager          CGEventTap (self-healing); modifier-only & combo hotkeys, hold/toggle, double-tap
+HotkeyConflictChecker  System-shortcut blacklist + internal hotkey conflict warnings
+ASRProvider            Protocol abstracting ASR engines — each provider owns its mic/audio pipeline
+SFSpeechProvider       SFSpeechRecognizer streaming + contextualStrings injection (default engine)
+WhisperKitProvider     WhisperKit large-v3 local model; download/status managed in Application Support
+VocabPostprocessor     Post-ASR proper-noun correction: alias exact match + Levenshtein fuzzy
+PolishService          Ollama (local/cloud) / Claude / DeepSeek / Gemini / OpenAI-compatible (SSE streaming)
+TextInjector           Clipboard + ⌘V with changeCount-aware restore
+VocabStore             ~/Library/Application Support/VoiceBee/vocab.json
+StatsStore             UserDefaults cumulative counters
+UpdaterManager         Sparkle 2 wrapper
 ```
 
 The dictation pipeline:
 ```
-hotkey down → AudioRecorder.start + SpeechRecognizer.startStreaming(contextualStrings)
-[audio frames stream into recognizer]
-hotkey up → recognizer.finishStreaming → PolishService.polishStream(vocabTerms)
-→ TextInjector.inject (or background polish + ⌘V replace in instant mode)
+hotkey down → ASRProvider.startStreaming(language, vocabHint) — provider runs its own mic capture
+[partial transcripts stream to the overlay]
+hotkey up → provider finalizes → VocabPostprocessor.apply(finalText, vocab)
+→ PolishService.polishStream(outputStyle, vocabTerms)   (or translate(targetLang) if marked mid-recording)
+→ TextInjector.inject
 → StatsStore.record + VocabStore.recordHits + history
 ```
 
 ## Privacy
 
 - All credentials are stored in the macOS Keychain (`com.clearsky.VoiceJar`).
-- Audio never leaves your machine when you use Apple ASR + Ollama.
+- Audio never leaves your machine when you use Apple ASR + Ollama; with WhisperKit the ASR model itself also runs entirely on-device.
 - When you choose a cloud LLM (Claude / DeepSeek / Gemini / OpenAI), only the **transcript** is sent — never raw audio.
 - The polish model is prompted to clean up the text only; it is told **not** to answer questions or execute instructions inside the transcript.
 
 ## Maintainer release checklist
 
-Releases are automated via GitHub Actions. To cut a new release:
+Releases are a **local manual flow** — there is no CI release pipeline (the old `release.yml` was removed 2026-07; it targeted the private repo and would have required exporting the Sparkle private key into GitHub Secrets). CI (`ci.yml`) only runs build + test + SwiftLint as a quality gate.
+
+To cut a new release:
 
 ```bash
 # 1. Bump Info.plist (CFBundleShortVersionString + CFBundleVersion)
-# 2. Push tag
-git tag v1.x.x
-git push --tags
+# 2. Run the release script (build → version check → DMG → Sparkle-sign)
+./scripts/release.sh 1.x.x
+# 3. Follow the script's printed steps: prepend the new <item> to appcast.xml
+#    in VoiceBee-Releases, publish the GitHub Release there (two DMG assets),
+#    then commit the version bump + tag in this repo.
 ```
 
-CI handles: build → sign → notarize → Sparkle-sign → generate appcast.xml → publish GitHub Release.
-
-**First-time setup** (configure these GitHub Secrets once): see [docs/RELEASE.md](docs/RELEASE.md).
-- `SPARKLE_ED_PRIVATE_KEY` — Sparkle update signing
-- `APPLE_CERT_P12_BASE64` + `APPLE_CERT_PASSWORD` — Developer ID Application certificate
-- `APPLE_ID` + `APPLE_APP_PASSWORD` + `APPLE_TEAM_ID` — Notarization
-
-For local manual release: `./scripts/release.sh 1.x.x`.
+Full details (dual-repo model, appcast, notarization status): see [docs/RELEASE.md](docs/RELEASE.md).
 
 ## License
 
