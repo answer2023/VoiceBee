@@ -124,9 +124,13 @@ final class VocabStore {
     }
 
     func add(_ entry: VocabEntry) {
-        guard !entry.term.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        guard !existingTermSet.contains(entry.term.lowercased()) else { return }
-        entries.append(entry)
+        // 与 addBatch 对齐:先 trim 再判重、存 trimmed term — 否则空白变体(" VoiceBee ")会绕过判重
+        let key = entry.term.trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return }
+        guard !existingTermSet.contains(key.lowercased()) else { return }
+        var normalized = entry
+        normalized.term = key
+        entries.append(normalized)
         save()
     }
 
