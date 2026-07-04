@@ -2,6 +2,8 @@
 
 ## release.yml YAML validation error(待修)
 
+> **2026-07-04 状态注**:该 bug 从未修过(此文件 git 历史上只有 697a2b2 新增 + 07c68d3 checkout 升级两个 commit)。当前工作区已把 `.github/workflows/release.yml`(连同根目录 `appcast.xml`)staged 删除、尚未 commit —— 发版实际走 `scripts/release.sh` + VoiceBee-Releases 双仓库流程(见 CLAUDE.md)。删除一旦 commit,本条随之作废。
+
 **现象**:每次 master push 触发一次 failed run,validation 阶段就失败,从未真正执行。
 
 **GitHub UI 报错**:
@@ -40,7 +42,10 @@ JS 对象 `href:` 数据渲染为 `<a href>`,**不阻塞页面加载**,但点击
   - `jotbee.js` line 434/440 → `privacy.html`
 - **voicebee.tangzhihong.com**:
   - `voicebee.js` line 117/122/366/368/378/384 → 跨产品导航
+  - **2026-07-04 注**:该子域已于 2026-05-09 整域 301 → `jotbee.app/voicebee.html`(见 CLAUDE.md「已知 follow-up」;2026-07-04 curl 实测 301 仍生效),这条的 broken link 不再对外暴露
 - **freejournal.app**:无 broken link ✅
+
+**2026-07-04 注**:其余站点(tangzhihong.com / jotbee.app)的链接状态未复核,清单按 2026-05-04 原样保留。
 
 **修法**:
 1. 跨产品导航 → 改用绝对 URL(`https://jotbee.app/...`)
@@ -54,14 +59,20 @@ JS 对象 `href:` 数据渲染为 `<a href>`,**不阻塞页面加载**,但点击
 **验证命令**:`git stash list`
 **清理命令**:`git stash drop stash@{0}`
 
+**2026-07-04 验证**:两个 stash 仍在(`git stash list` 实测),"部署稳定运行 1-2 周" 观察期早已届满,待执行 drop。
+
 ---
 
 ## Cloudflare 收尾(优先级 P2,本周内做)
+
+> **2026-07-04 注**:"本周内"指 2026-05-04 当周,已过期约两个月。
 
 ### 验证 voicebee 子域 CNAME 指向
 2026-05-04 切换部署平台:GitHub Pages → Cloudflare Pages。
 Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer2023.github.io` 改为 `voicebee.pages.dev`。
 **待验证**:登录 Cloudflare → tangzhihong.com 区域 → DNS → 记录,确认 voicebee CNAME 现在指向 `voicebee.pages.dev`。如仍指向 GitHub,手动改。
+
+**2026-07-04 注**:2026-05-09 起该子域改由 Cloudflare Redirect Rule 整域 301 → `jotbee.app/voicebee.html`(见 CLAUDE.md「已知 follow-up」;curl 实测 301 生效),原"CNAME 指向 pages.dev"的验证目标已被此方案取代。DNS 走 Cloudflare 代理(`dig` 只见 proxy A 记录),CNAME 具体指向仍需登录后台核对。
 
 ### 清理今天上午加的旧 DNS 记录
 部署 GitHub Pages 路线时加的 TXT 验证记录(2026-05-04):
@@ -70,12 +81,16 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 **现状**:GitHub 已 verified,但已不再用 GitHub Pages 部署 voicebee。
 **是否删**:留着无害(不影响任何东西),但属于"已废弃配置"。强迫症患者可删;懒人可留。
 
+**2026-07-04 实测**:`dig TXT` 该记录仍在,未清理。
+
 ### GitHub OAuth 授权收紧
 2026-05-04 配置 Cloudflare Pages 时,授予了 **All 28 repositories** 访问权限。**实际只需要 VoiceBee 一个**。
 **修法**:
 1. GitHub → Settings → Applications → Authorized OAuth Apps → Cloudflare Pages
 2. 改 Repository access → Only select repositories → 只勾 VoiceBee
 3. 验证 Cloudflare Pages 部署仍正常(push 一次 gh-pages 测试)
+
+**2026-07-04 注**:是否已收紧无法从仓库/命令行验证,需登录 GitHub 网页核对。
 
 ---
 
@@ -116,6 +131,10 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 
 **预估**:每个 app 15 分钟。
 
+**2026-07-04 状态**:
+- **VoiceBee ✅ 已完成**:图标更新 commit `46d33cf`(2026-05-06,复古金属麦克风),v1.2.2 (build 9) 用新图标构建发布(`1b3af29`,2026-05-07);/Applications/VoiceBee.app 实测已是 1.2.2 (build 9)。
+- **JotBee**:/Applications/JotBee.app 实测已更新到 1.1.1 (build 15)(bundle 日期 2026-06-12),本地重装已发生;图标是否为新版无法从本仓库验证(JotBee 是另一个项目)。
+
 ### JotBee App Store 更新
 **待决定**:本次更新除了换图标,还有什么变更?
 - 如果只换图标 → 价值低,不值得走审核
@@ -136,6 +155,8 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 
 **预估**:首次走完整流程 1-2 小时(不含审核等待)。
 
+**2026-07-04 注**:本地已装 JotBee 1.1.1 (build 15);App Store 是否已发版无法从本仓库验证,待决定项按原样保留。
+
 ---
 
 ## UX 改进(优先级 P3,不影响功能)
@@ -145,11 +166,13 @@ Cloudflare Pages "激活域" 时**应自动**把 `voicebee` CNAME 从 `answer202
 
 **用户认知误差**:看到"翻译触发键 = Option",会自然以为是「按住 Option 翻译」或「按 Option 录音中切换」,而不是「快速点一下」。2026-05-04 测试时实测踩中:按住 Option 不松开 → 翻译标记永远没切换。
 
-**代码层(已正确实现)**:`HotkeyManager.swift:159-184` 的 `flagsChanged` 逻辑——按下记录时间,松开时检查 < 800ms 且期间无其他键事件 → 才判定为单击 → 切换 `translateMarked`。这是合理设计(避免和 modifierKey 组合键冲突)。
+**代码层(已正确实现)**:`VoiceJar/Services/HotkeyManager.swift:181-204` 的 `flagsChanged` 逻辑——按下记录时间,松开时检查 < 800ms 且期间无其他键事件 → 才判定为单击 → 切换 `translateMarked`。这是合理设计(避免和 modifierKey 组合键冲突)。(行号已按 2026-07-04 现状更新:Phase 3-B 可自定义快捷键 `ae1c36e` 重构后原 159-184 移位;逻辑本身未变,阈值仍是 `dur < 0.8`。)
 
 **建议改进**(任一即可):
 1. 设置面板「翻译触发键」标题下加一行说明:「录音中**快速点击**此键(<800ms)切换翻译模式」
 2. 或在第一次录音时浮窗提示一次「按 Option 翻译,Esc 取消」
 3. 或在主页/帮助里加 GIF 演示
+
+**2026-07-04 复核**:设置面板「翻译触发键」的描述「录音中单击此键标记本次走翻译管线;再按一下取消」及「使用方法」步骤 3「录音中**任意时刻**单击…一下」(`SettingsView.swift:425-446`)自 `81f26e6` 起就存在——但 **<800ms「快速点击 vs 按住」的阈值语义仍未在 UI 写明**(建议 1 的核心诉求未落),建议 2(首次录音浮窗提示)与建议 3(GIF)也未实现。条目仍开放。
 
 **不影响**:功能本身正确,只影响新用户上手体验。
