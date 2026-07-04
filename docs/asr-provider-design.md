@@ -2,7 +2,7 @@
 
 > **Purpose**: 把 VoiceBee 现有 SFSpeech 单一 ASR 实现,抽象成可插拔的 `ASRProvider` protocol,让 SFSpeech 与 WhisperKit 在同一接口下并行,UI 可在 Settings 切换。
 >
-> **Status**: 设计稿。D1-D7 决策点已标 **TBD**,等用户拍板后再落地实现。
+> **Status**(updated 2026-07-04): ✅ **已拍板并全部落地实现**(Phase 2C–2F,2026-05-12 ~ 05-13)。D1-D7 决策全部按本文实施,落地文件:`VoiceJar/Services/ASRProvider.swift`(protocol + 类型)/ `SFSpeechProvider.swift`(Phase 2C)/ `WhisperKitProvider.swift`(Phase 2D)/ `VoiceEngine.swift`(Phase 2E-a 接入 + 2F 切换);旧 `SpeechRecognizer` / `AudioRecorder` 已删除(Phase 2E-b)。2026-07-04 审计加固:WhisperKitProvider 增加 session-token 过滤旧 session 残余回调(`88aeb9b`),VoiceEngine prepare 陈旧事件按实例身份(ObjectIdentifier)过滤(`3af28ca`)。本文保留原设计推理,与实现的偏差以带日期的注记标出。
 
 ---
 
@@ -59,6 +59,9 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 - partial/final/error 用 closure 而非 AsyncStream — 理由不变(高频回调 + 现有 VoiceEngine `@MainActor` closure 范式一致)
 - 生命周期(`prepare()` / `startStreaming()`)用 async — 给模型下载 / 权限请求留 await 点
 
+> **✅ 已实施**(Phase 2C/2D):按本决策落地,`SFSpeechProvider` 内化 mic(`AVAudioEngine` + tap),`WhisperKitProvider` 走 `AudioStreamTranscriber` pull 模型,VoiceEngine 不持 AudioRecorder。
+> **2026-07-04 加固**:快速停-启场景下旧 session 回调污染新 session — 两个 provider 都用 `activeSessionToken`(UUID)在主 actor 落地处过滤旧 session 残余回调(WhisperKitProvider 侧为 `88aeb9b` 补齐);`SFSpeechProvider.stop/cancel` 的 `removeTap` 改为无条件执行,防输入设备变更后 tap 残留导致下次 `installTap` 崩溃(`f65938e`)。
+
 ---
 
 ## D2: 词汇注入接口(vocabulary hint)
@@ -71,9 +74,11 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **B. 结构化 hint** | `startStreaming(vocab: VocabHint, ...)` 内含 `terms: [String]` + `aliases: [String: [String]]` 等 | 同上 | provider 可用 aliases 喂 prompt + 后处理替换 |
 | **C. 不在 protocol 暴露** | provider 初始化时拿到 `VocabularyManager`,protocol 不知道 | provider 内部读 vocab | 同 |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **A. `[String]` 直接传入 `startStreaming`**。
+
+> **实施偏差**(2026-07-04 注):protocol 形态按 A 落地;SFSpeech 侧照喂 `contextualStrings`。但 WhisperKitProvider 内部目前**不消费** `vocabHint`(`_ = vocabHint`,promptTokens 仍是 v1.0.0 死胡同)— 拼写矫正没有做在 provider 内部,而是上移到 **VoiceEngine 层**统一走 `VocabPostprocessor`(Phase 3-A,alias 精确 + Levenshtein fuzzy,`a0d7ff9`;final 段 + stop 快照均矫正,注入/润色/历史路径补齐见 `cbe63ad`),两个引擎共享同一矫正管线。
 
 ### Rationale
 
@@ -95,9 +100,11 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **A. 隐藏在 provider 内部** | SFSpeechProvider 自己起 timer,自动 rotate | protocol 不暴露 rotate |
 | **B. 暴露 `func rotate()`** | VoiceEngine 持 timer,显式调 provider.rotate() | protocol 加 `func rotate()`(WhisperKit 空实现) |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **A. 隐藏在 provider 内部**。
+
+> **实施注**(2026-07-04):完全按此落地 — `SFSpeechProvider` 内部 `rotationTimer`(55s)+ `internalRotate()`,rotation 旧 session 残余回调用 `activeSessionToken` 过滤;protocol 无 `rotate()`,VoiceEngine 的旧 55s Timer 已随 Phase 2E-b 删除。
 
 ### Rationale
 
@@ -119,9 +126,14 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **B. 独立 ModelManager class** | `ModelManager.shared.download(.whisperKit)` | UI 直接调 ModelManager,跨 provider |
 | **C. 不抽象** | WhisperKitProvider 内部下载,SFSpeechProvider 空操作,UI 直接判 `if provider is WhisperKitProvider` | 强转地狱 |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **A. protocol 内部 polymorphic — `prepare()` + `modelStatus`**。
+
+> **实施偏差**(2026-07-04 注):
+> - WhisperKitProvider 未引入独立 `ModelDownloader` 组件 — 下载直接委托 WhisperKit 内部 HF Hub 逻辑。`prepare()` 是**双模式**(2026-05-13 fix):本地模型完整(含手动复制)→ `modelFolder` fast path 直接 load;缺失/不完整 → `downloadBase` 触发自动下载。
+> - WhisperKit 内部下载**无公开 progress hook**(W9),`ASRPrepareEvent.downloadProgress` 实际不 fire,只发 `downloadStarted` + `loading` + `ready`。
+> - `progress` closure 落地为 `@Sendable`(provider 内部跨 actor 触发),不是草案说的"在主 actor 调用" — VoiceEngine 收到后自行 hop 回 main。
 
 ### Rationale
 
@@ -144,9 +156,11 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **B. Swift 6 typed throws** | `throws(SFSpeechError)` / `throws(WhisperKitError)` | per-provider switch,无法 share 处理逻辑 |
 | **C. NSError 透传** | 现状 | `(error as NSError).code != 1110`(脏代码) |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **A. 统一 `ASRError` enum**。
+
+> **实施注**(2026-07-04):按草案落地(6 个 case 一致),`(error as NSError).code != 1110` 脏代码已被 `VoiceEngine.handleASRError` 的 `case .noSpeechDetected` 取代;实现额外给 `ASRError` 加了 `Equatable` conformance(`ASRModelStatus: Equatable` 内嵌 error + 测试比较需要)。
 
 ### Rationale
 
@@ -169,9 +183,11 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **B. drain** | 等当前 utterance finalize 再切 | 用户切了但 5s 后才生效,期间状态模糊 |
 | **C. 拒绝切换 if 录音中** | Settings UI disable 切换按钮 if `appState.isRecording`,toast 提示 | 简单 clear,corner case 无歧义 |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **C. 拒绝切换 if 录音中**。
+
+> **实施注**(2026-07-04):Phase 2F 落地。Picker disable 条件实际为 `.disabled(appState.isRecording || appState.isProcessing || appState.isTranslating)`(比草案多 `isTranslating`);`VoiceEngine.swapProvider` 再做同条件 guard(F7 defense-in-depth)。切换 = `prepareTask.cancel()` + 旧 provider `cancel()` → 新 provider 创建 + 后台 `prepare()`(F8)。实现额外新增两点草案未涉及的行为:1) 切到 whisperKit 前 Settings 弹确认(模型下载体积提示);2) **F6**:新引擎 prepare 失败自动回退 `asrEngine = .sfSpeech` 并提示用户。
 
 ### Rationale
 
@@ -194,9 +210,12 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 | **B. lazy init — 第一次 startRecording 时** | 用户按 Fn 触发 init + prepare | **WhisperKit 用户按 Fn 等 7s 才录音 — 不可接受** |
 | **C. on-switch 创建** | Settings 切换瞬间 init 新 provider | 切完仍要等 7s warm |
 
-### Decision (TBD)
+### Decision(✅ 已实施)
 
 **A. app launch 预创建 + 后台 `prepare()` async task**。
+
+> **实施注**(2026-07-04):`VoiceEngine.init` 按 `appState.asrEngine` 创建 provider 后即 `schedulePrepare`(F3)。偏差:prepare 前加 **100ms 启动延迟保险** — 给 `VoiceJarDelegate.requestPermissions` 的 TCC callback 落地窗口,消除两个 TCC 请求同帧 race(Phase 2E-a Thread 3 教训)。
+> **2026-07-04 加固**(`3af28ca`):prepare 进度/失败事件按**实例身份**(`ObjectIdentifier(provider)`)过滤 — 同引擎快速来回切换时新旧实例 engine ID 相同,只有实例身份能挡住旧实例的陈旧事件冒充;prepare 失败回滚 sfSpeech(F6)同样受此 guard 保护。
 
 ### Rationale
 
@@ -213,6 +232,8 @@ PoC 已完成(2026-05-11,见 `docs/whisperkit-poc-results.md`):
 ## ASRProvider Protocol 草案 (revised 2026-05-12)
 
 > **revised**: 删 `appendBuffer` — provider 自管麦克风(D1 revised),VoiceEngine 退化为协调者。
+>
+> **✅ 已落地**(2026-07-04 注):正式版在 `VoiceJar/Services/ASRProvider.swift`(Phase 2C),形态与下方草案一致,差异仅在并发标注:`static var id` 标 `nonisolated`;`prepare(progress:)` 的 closure 标 `@Sendable`;`ASREngine` 加 `Sendable`,`ASRPrepareEvent` 加 `Sendable`,`ASRError` 加 `Equatable`。以下代码保留为历史草案,**以 .swift 文件为准**。
 
 ```swift
 import Foundation
@@ -324,6 +345,12 @@ protocol ASRProvider: AnyObject {
 
 ## SFSpeech Fit(伪代码,D1 revised — provider 自管 mic)
 
+> **✅ 已实现**(2026-07-04 注):正式版 `VoiceJar/Services/SFSpeechProvider.swift`(Phase 2C)。与伪代码的关键偏差:
+> - installTap closure **不再经 `self` 访问 request** — 改用独立 `@unchecked Sendable` 的 `StreamingRequestBox` 桥接(2026-05-13 Thread 7 crash 教训:`nonisolated(unsafe) var` 在 audio thread 上仍撞 `_dispatch_assert_queue_fail`)
+> - `prepare()` 失败时会置 `modelStatus = .failed(.unauthorized)`(伪代码只 throw)
+> - `stop/cancel` 的 `removeTap` 无条件执行(2026-07-04 `f65938e`,防设备变更后 tap 残留)
+> 以下伪代码保留为设计参考,**以 .swift 文件为准**。
+
 ```swift
 @MainActor
 final class SFSpeechProvider: ASRProvider {
@@ -427,6 +454,14 @@ final class SFSpeechProvider: ASRProvider {
 ---
 
 ## WhisperKit Fit(伪代码,D1 revised — pull 模型原生 fit)
+
+> **✅ 已实现**(2026-07-04 注):正式版 `VoiceJar/Services/WhisperKitProvider.swift`(Phase 2D)。与伪代码的关键偏差:
+> - **`VocabPostprocessor.apply` 不在 provider 内** — vocab 矫正上移到 VoiceEngine 层(见 D2 实施偏差注),provider 内 `vocabHint` 暂不消费
+> - `prepare()` 是双模式(modelFolder fast path / downloadBase 下载,见 D4 实施偏差注),并先用 `isModelComplete()` 检测三个 mlmodelc 是否就位
+> - `stopStreaming()` 增加 **W5**:短录音(<12s)永远等不到 confirmed segment,stop 时强制把 `fullTranscript` 提升为 final fire 一次
+> - **2026-07-04 加固**(`88aeb9b`):`activeSessionToken`(UUID)过滤旧 session 残余回调 — transcribe loop 在 `stopStreamTranscription` 后异步退出,快速停-启时旧 transcriber 的 stateChangeCallback / error 落到主 actor 即被 token 比对丢弃;`stopStreaming` 挂起期间 token 轮换也不再污染新 session
+> - `fullTranscript` = `confirmedAccum + liveTail`(伪代码只有 confirmed 累加)
+> 以下伪代码保留为设计参考,**以 .swift 文件为准**。
 
 ```swift
 import WhisperKit
@@ -581,26 +616,28 @@ final class WhisperKitProvider: ASRProvider {
 
 ---
 
-## 实施顺序(待 D1-D7 拍板后)
+## 实施顺序(✅ 已完成 — 原"待 D1-D7 拍板后")
 
 > **Phase 2B 第一个任务是 spike WhisperKit 流式音频接口(`audioProcessor.processAudioBuffer`),如果流式不可行,退回 chunk-and-transcribe 方案(攒 2-3s 音频片段调 `transcribe(audioPath:)`),该方案已在 PoC 验证可行。** 此 spike 决定 `WhisperKitProvider.appendBuffer` 的实现路径,不能阻塞协议落地 — protocol 形态对两种实现都兼容(streaming 直接 forward,chunk-and-transcribe 由 provider 内部攒 buffer + 定时 flush)。
+>
+> **(2026-07-04 注:此段是 D1 revised 之前的旧前提 — spike 已完成且流式可行,`appendBuffer` 已从 protocol 删除,未走 chunk-and-transcribe 退路。)**
 
-1. 落 `ASREngine` / `ASRError` / `ASRModelStatus` / `ASRPrepareEvent` 类型(纯数据,无副作用)
-2. 落 `ASRProvider` protocol 定义
-3. 把现有 `SpeechRecognizer.swift` 重构为 `SFSpeechProvider: ASRProvider`,自测保持现有行为
-4. VoiceEngine 改用 `ASRProvider` 接口(暂时硬连 `SFSpeechProvider()`)— 这一步 master 行为不变
-5. 主 app SPM 加 WhisperKit(`docs/whisperkit-poc-results.md` A 节有步骤)
-6. 落 `WhisperKitProvider: ASRProvider`,先 mock vocabHint(不注入,等 promptTokens 研究)
-7. Settings UI 加 ASR engine picker + Onboarding 模型下载
-8. alpha 双轨测试
+1. ✅ 落 `ASREngine` / `ASRError` / `ASRModelStatus` / `ASRPrepareEvent` 类型(纯数据,无副作用)— Phase 2C `bad2f1f`
+2. ✅ 落 `ASRProvider` protocol 定义 — Phase 2C `bad2f1f`
+3. ✅ 把现有 `SpeechRecognizer.swift` 重构为 `SFSpeechProvider: ASRProvider`,自测保持现有行为 — Phase 2C(旧文件随 Phase 2E-b `d1b36b1` 删除)
+4. ✅ VoiceEngine 改用 `ASRProvider` 接口(暂时硬连 `SFSpeechProvider()`)— 这一步 master 行为不变 — Phase 2E-a `1f5cf6e`
+5. ✅ 主 app SPM 加 WhisperKit(`docs/whisperkit-poc-results.md` A 节有步骤)— Phase 2D `daa27a8`
+6. ✅ 落 `WhisperKitProvider: ASRProvider`,先 mock vocabHint(不注入,等 promptTokens 研究)— Phase 2D `daa27a8`
+7. ✅ Settings UI 加 ASR engine picker + Onboarding 模型下载 — Phase 2F `47251b1`
+8. alpha 双轨测试(状态未在 repo 内记录)
 
 ---
 
 ## 待持续研究的开放问题
 
-- **WhisperKit promptTokens 用法** — Phase 2 留作 spike,5 条具体方向见 `docs/whisperkit-poc-results.md` E 节
-- **VocabPostprocessor 算法选型** — 编辑距离 / Aho-Corasick / 拼音模糊匹配,留待 promptTokens 修通前的过渡方案
+- **WhisperKit promptTokens 用法** — Phase 2 留作 spike,5 条具体方向见 `docs/whisperkit-poc-results.md` E 节 **(2026-07-04 注:仍未修通,provider 内 `vocabHint` 暂不消费;过渡方案 VocabPostprocessor 已上线,见下条)**
+- **VocabPostprocessor 算法选型** — 编辑距离 / Aho-Corasick / 拼音模糊匹配,留待 promptTokens 修通前的过渡方案 **(✅ 2026-05-16 已定并落地:alias 精确匹配 + Levenshtein fuzzy,Phase 3-A `a0d7ff9`,矫正做在 VoiceEngine 层,双引擎共享)**
 - **AudioStreamTranscriber 实际 API surface** — ✅ Phase 2B spike 已实测,源码定位 + 签名 + ArgmaxCLI 参考模式见 `docs/whisperkit-streaming-spike.md`
-- **special-token 清洗实现** — Spike 实测发现 WhisperKit 输出含 `<|en|>` / `<|zh|>` / `<|transcribe|>` 等控制符,WhisperKitProvider 用 regex `<\|[^|]+\|>` 移除是临时方案,实施阶段需对照 WhisperKit 内部 tokenizer 行为确认是否漏边界
-- **首次 partial ~12s** (Spike 实测) — 比 SFSpeech 慢明显,可能受 large-v3 模型 + VAD `requiredSegmentsForConfirmation=2` 影响,实施阶段需试 `large-v3-turbo` / 调 `silenceThreshold` / 调 `requiredSegmentsForConfirmation` 平衡延迟与稳定性
-- **VoiceEngine 改造范围** — D1 revised 后 VoiceEngine 不再持 AudioRecorder,但仍需保留:overlay 显示 / polish 调度 / 翻译分流;改造时确认现有 `recorder.onAudioBuffer` 和 `rotationTimer` 干净移除,不留死代码
+- **special-token 清洗实现** — Spike 实测发现 WhisperKit 输出含 `<|en|>` / `<|zh|>` / `<|transcribe|>` 等控制符,WhisperKitProvider 用 regex `<\|[^|]+\|>` 移除是临时方案,实施阶段需对照 WhisperKit 内部 tokenizer 行为确认是否漏边界 **(2026-07-04 注:正式版 `WhisperKitProvider.cleanText` 仍用此 regex(W7),"是否漏边界"未做系统性验证,保持开放)**
+- **首次 partial ~12s** (Spike 实测) — 比 SFSpeech 慢明显,可能受 large-v3 模型 + VAD `requiredSegmentsForConfirmation=2` 影响,实施阶段需试 `large-v3-turbo` / 调 `silenceThreshold` / 调 `requiredSegmentsForConfirmation` 平衡延迟与稳定性 **(2026-07-04 注:模型仍为 large-v3 626MB,turbo / VAD 参数未试,保持开放;实现侧缓解了衍生问题 — `stopStreaming` 强制把 fullTranscript 提升为 final(W5),短录音不再因等不到 confirmed segment 丢文本)**
+- **VoiceEngine 改造范围** — D1 revised 后 VoiceEngine 不再持 AudioRecorder,但仍需保留:overlay 显示 / polish 调度 / 翻译分流;改造时确认现有 `recorder.onAudioBuffer` 和 `rotationTimer` 干净移除,不留死代码 **(✅ 2026-05-13 完成:Phase 2E-b `d1b36b1` 删除 `SpeechRecognizer.swift` + `AudioRecorder.swift`,VoiceEngine 无 recorder / rotationTimer 残留;overlay / polish / 翻译分流保留)**
