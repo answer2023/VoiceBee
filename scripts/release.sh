@@ -15,12 +15,16 @@ BUILD_DIR="$(pwd)/build"
 APP_NAME="VoiceBee"
 DMG="$BUILD_DIR/${APP_NAME}-${VERSION}.dmg"
 
-# 1. 找 Sparkle 工具
-SPARKLE_BIN=$(find ~/Library/Developer/Xcode/DerivedData -name "sign_update" -type f -path "*sparkle*Sparkle/bin*" 2>/dev/null | head -1 | xargs dirname)
-if [ -z "$SPARKLE_BIN" ]; then
-    echo "❌ 找不到 Sparkle bin 目录。先在 Xcode 里 build 一次让 SPM 解析 Sparkle。"
+# 1. 找 Sparkle 工具 — 先搜本项目 build 目录(-derivedDataPath 构建的 SPM 产物),
+#    再 fallback 到 ~/Library DerivedData;排除 old_dsa_scripts 下的旧版同名脚本
+SIGN_UPDATE=$(find "$BUILD_DIR" ~/Library/Developer/Xcode/DerivedData \
+    -name "sign_update" -type f -path "*sparkle*Sparkle/bin*" \
+    -not -path "*old_dsa*" 2>/dev/null | head -1)
+if [ -z "$SIGN_UPDATE" ]; then
+    echo "❌ 找不到 sign_update。先 build 一次让 SPM 解析 Sparkle。"
     exit 1
 fi
+SPARKLE_BIN=$(dirname "$SIGN_UPDATE")
 echo "Sparkle bin: $SPARKLE_BIN"
 
 # 2. xcodegen + Release build
@@ -96,7 +100,7 @@ echo "▶️ 已生成 latest 副本：$DMG_LATEST"
 cat <<EOF
 
 ✅ 构建完成：$DMG ($SIZE bytes)
-✅ Latest 副本：$DMG_LATEST（字节同上）
+✅ Latest 副本：${DMG_LATEST}（字节同上）
 
 将下面这段 <item> 填进 ~/Developer/VoiceBee-Releases/appcast.xml 的 <channel> 顶部（最新版置顶）：
 
