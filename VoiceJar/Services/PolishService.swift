@@ -274,7 +274,7 @@ actor PolishService {
 
     // MARK: - SSE Parsing
 
-    private static func parseStreamLine(_ line: String, engine: PolishEngine) throws -> String? {
+    static func parseStreamLine(_ line: String, engine: PolishEngine) throws -> String? {
         switch engine {
         case .ollama, .ollamaCloud:
             return parseOllamaChunk(line)
@@ -288,7 +288,7 @@ actor PolishService {
     }
 
     /// Ollama: 每行一个 JSON {"message":{"content":"token"},"done":false}
-    private static func parseOllamaChunk(_ line: String) -> String? {
+    static func parseOllamaChunk(_ line: String) -> String? {
         guard let data = line.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let message = json["message"] as? [String: Any],
@@ -298,7 +298,7 @@ actor PolishService {
     }
 
     /// Claude SSE: data: {"type":"content_block_delta","delta":{"text":"token"}}
-    private static func parseClaudeChunk(_ line: String) throws -> String? {
+    static func parseClaudeChunk(_ line: String) throws -> String? {
         guard line.hasPrefix("data: ") else { return nil }
         let jsonStr = String(line.dropFirst(6))
         guard let data = jsonStr.data(using: .utf8),
@@ -315,7 +315,7 @@ actor PolishService {
     }
 
     /// OpenAI SSE: data: {"choices":[{"delta":{"content":"token"}}]}
-    private static func parseOpenAIChunk(_ line: String) throws -> String? {
+    static func parseOpenAIChunk(_ line: String) throws -> String? {
         guard line.hasPrefix("data: ") else {
             // 部分兼容网关 200 后直接推顶层 error JSON(无 data: 前缀),不能当空行吞掉
             if let data = line.data(using: .utf8),

@@ -83,6 +83,9 @@ final class TranslationSettings {
     /// load() 里赋值触发 didSet→save() 会用未加载完的默认值清掉磁盘配置,load 期间压制
     private var isLoading = false
 
+    /// 注入 defaults 供测试隔离(生产用 .standard)
+    private let defaults: UserDefaults
+
     var workingLanguages: Set<WorkingLanguage> = [.zhHans, .en] {
         didSet { save() }
     }
@@ -93,7 +96,10 @@ final class TranslationSettings {
         didSet { save() }
     }
 
-    init() { load() }
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        load()
+    }
 
     /// 翻译模式当前是否实际可被触发（目标语言 + 触发键 都已配置）
     var isActiveForRecording: Bool {
@@ -136,7 +142,7 @@ final class TranslationSettings {
 
     private func save() {
         guard !isLoading else { return }
-        let d = UserDefaults.standard
+        let d = defaults
         d.set(workingLanguages.map(\.rawValue), forKey: "translation_workingLanguages")
         d.set(targetLanguage?.rawValue ?? "", forKey: "translation_targetLanguage")
         d.set(trigger.rawValue, forKey: "translation_trigger")
@@ -145,7 +151,7 @@ final class TranslationSettings {
     private func load() {
         isLoading = true
         defer { isLoading = false }
-        let d = UserDefaults.standard
+        let d = defaults
         if let arr = d.stringArray(forKey: "translation_workingLanguages") {
             let parsed = Set(arr.compactMap { WorkingLanguage(rawValue: $0) })
             if !parsed.isEmpty { workingLanguages = parsed }

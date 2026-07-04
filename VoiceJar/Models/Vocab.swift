@@ -58,12 +58,17 @@ final class VocabStore {
     private(set) var loadFailed = false
     private let fileURL: URL
 
-    init() {
-        let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = support.appendingPathComponent("VoiceBee", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        self.fileURL = dir.appendingPathComponent("vocab.json")
+    /// - Parameter fileURL: 词典 JSON 路径 — 测试注入用;nil 走生产默认 Application Support/VoiceBee/vocab.json
+    init(fileURL: URL? = nil) {
+        if let fileURL {
+            self.fileURL = fileURL
+        } else {
+            let fm = FileManager.default
+            let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let dir = support.appendingPathComponent("VoiceBee", isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.fileURL = dir.appendingPathComponent("vocab.json")
+        }
         load()
         ensureDefaultsIfEmpty()
     }

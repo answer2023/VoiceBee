@@ -7,6 +7,9 @@ import Security
 class PolishSettings {
     private let keyPrefix: String
 
+    /// 注入 defaults 供测试隔离(生产用 .standard)
+    private let defaults: UserDefaults
+
     /// load() 里的赋值会触发 didSet→save(),那一刻其余属性还是默认值,
     /// 会把磁盘上的用户配置先清空再读回 —— load 期间必须压制持久化
     private var isLoading = false
@@ -24,8 +27,9 @@ class PolishSettings {
         didSet { saveAPIKey() }
     }
 
-    init(keyPrefix: String = "polish") {
+    init(keyPrefix: String = "polish", defaults: UserDefaults = .standard) {
         self.keyPrefix = keyPrefix
+        self.defaults = defaults
         load()
     }
 
@@ -50,7 +54,6 @@ class PolishSettings {
 
     private func save() {
         guard !isLoading else { return }
-        let defaults = UserDefaults.standard
         defaults.set(engine.rawValue, forKey: "\(keyPrefix)_engine")
         defaults.set(model, forKey: "\(keyPrefix)_model")
         defaults.set(baseURL, forKey: "\(keyPrefix)_baseURL")
@@ -59,7 +62,6 @@ class PolishSettings {
     private func load() {
         isLoading = true
         defer { isLoading = false }
-        let defaults = UserDefaults.standard
         if let raw = defaults.string(forKey: "\(keyPrefix)_engine"),
            let eng = PolishEngine(rawValue: raw) {
             engine = eng

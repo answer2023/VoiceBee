@@ -12,7 +12,13 @@ final class StatsStore {
     /// 假设手打 60 字/分钟（行业基准，与 Typeless / OpenLess 一致）
     private let typingCharsPerMinute: Double = 60
 
-    init() { load() }
+    /// 注入 defaults 供测试隔离(生产用 .standard)
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        load()
+    }
 
     func record(chars: Int, seconds: Double) {
         totalRecords += 1
@@ -43,7 +49,7 @@ final class StatsStore {
     }
 
     private func save() {
-        let d = UserDefaults.standard
+        let d = defaults
         d.set(totalRecords, forKey: "stats_totalRecords")
         d.set(totalChars, forKey: "stats_totalChars")
         d.set(totalSeconds, forKey: "stats_totalSeconds")
@@ -53,7 +59,7 @@ final class StatsStore {
     }
 
     private func load() {
-        let d = UserDefaults.standard
+        let d = defaults
         totalRecords = d.integer(forKey: "stats_totalRecords")
         totalChars = d.integer(forKey: "stats_totalChars")
         totalSeconds = d.double(forKey: "stats_totalSeconds")

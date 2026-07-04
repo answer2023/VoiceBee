@@ -251,6 +251,9 @@ final class OutputStyleSettings {
     /// load() 里赋值触发 didSet→save() 会用未加载完的默认值清掉磁盘配置,load 期间压制
     private var isLoading = false
 
+    /// 注入 defaults 供测试隔离(生产用 .standard)
+    private let defaults: UserDefaults
+
     var masterEnabled: Bool = true {
         didSet { save() }
     }
@@ -261,7 +264,10 @@ final class OutputStyleSettings {
         didSet { save() }
     }
 
-    init() { load() }
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        load()
+    }
 
     /// 双击 Fn 在启用的风格中循环；返回切换后的风格
     @discardableResult
@@ -296,7 +302,7 @@ final class OutputStyleSettings {
 
     private func save() {
         guard !isLoading else { return }
-        let d = UserDefaults.standard
+        let d = defaults
         d.set(masterEnabled, forKey: "outputStyle_master")
         d.set(defaultStyle.rawValue, forKey: "outputStyle_default")
         d.set(enabledStyles.map(\.rawValue), forKey: "outputStyle_enabled")
@@ -305,7 +311,7 @@ final class OutputStyleSettings {
     private func load() {
         isLoading = true
         defer { isLoading = false }
-        let d = UserDefaults.standard
+        let d = defaults
         if d.object(forKey: "outputStyle_master") != nil {
             masterEnabled = d.bool(forKey: "outputStyle_master")
         }
