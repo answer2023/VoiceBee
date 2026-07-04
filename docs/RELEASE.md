@@ -1,121 +1,92 @@
 # 发版指南
 
-VoiceBee 用 GitHub Actions 自动化发版。日常发版只需两步：
-
-```bash
-# 1. 改 VoiceJar/Info.plist 的 CFBundleShortVersionString 和 CFBundleVersion
-# 2. 推标签
-git tag v1.2.0
-git push --tags
-```
-
-CI 会自动：构建 Release → 用 Apple Developer ID 签名 → 公证 → Sparkle 签名 → 生成 appcast.xml → 创建 GitHub Release 上传 .dmg + appcast.xml。
-
-下面是首次配置 secrets 的步骤（**只需做一次**）。
+VoiceBee 发版是**本机手动流程**:`scripts/release.sh` 构建/校验/签名,双仓库分发。
+没有 CI 自动发版 —— 曾经的 release.yml(2026-05,双仓库改造前的产物)发布目标指向
+private 主仓库、会重演 v1.2.1 的公开 404 事故,且要求把 Sparkle 私钥导出进 GitHub
+Secrets,已于 2026-07 删除。将来若重建自动化,以本文档的双仓库模型为准。
 
 ---
 
-## 一、Sparkle 私钥（必须）
+## 双仓库模型(为什么发版分两个仓库)
 
-Sparkle 用 ed25519 签名验证更新包。私钥已经在你本机 Keychain（service `https://sparkle-project.org`）。
+| 仓库 | 可见性 | 放什么 |
+|---|---|---|
+| `answer2023/VoiceBee` | private | 源码、本文档、release.sh |
+| `answer2023/VoiceBee-Releases` | **public** | DMG release asset + `appcast.xml` |
 
-```bash
-# 找到 generate_keys 工具
-SPARKLE=$(find ~/Library/Developer/Xcode/DerivedData -name "generate_keys" -type f -path "*Sparkle*" | head -1)
+Sparkle 自动更新和官网下载按钮必须公开可访问;private 仓库的 release URL 对未登录
+用户全部 404。细节与踩坑时间线见 CLAUDE.md「仓库结构」节。
 
-# 把私钥导出到临时文件（base64 字符串）
-"$SPARKLE" -x /tmp/sparkle_priv.key
-cat /tmp/sparkle_priv.key   # 复制完整内容
-rm /tmp/sparkle_priv.key    # 立刻删除！
-```
-
-到 GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**：
-
-| Name | Value |
-|---|---|
-| `SPARKLE_ED_PRIVATE_KEY` | 上一步 cat 输出的完整 base64 字符串 |
-
-⚠️ **私钥泄漏 = 攻击者可以签发恶意更新让所有用户静默自动安装**。永远不要 commit、截图、转发；如果怀疑泄漏立刻 `generate_keys -f`（或手动删 Keychain 条目）重新生成 + 紧急更新所有用户。
+- **SUFeedURL**(app 内嵌):`https://raw.githubusercontent.com/answer2023/VoiceBee-Releases/main/appcast.xml`
+- 每个 release 上传**两个字节一致的 DMG**:`VoiceBee-X.Y.Z.dmg`(Sparkle enclosure 引用)
+  + `VoiceBee.dmg`(jotbee.app 网站 latest 直链)
 
 ---
 
-## 二、Apple Developer ID 证书（必须，否则 Gatekeeper 拦截）
-
-### 2.1 获取证书
-
-1. 你需要一个 [Apple Developer 账号](https://developer.apple.com/) — 个人 99 美元/年
-2. 登录 [Apple Developer Certificates](https://developer.apple.com/account/resources/certificates) → 创建一个 **Developer ID Application** 证书
-3. 在 Keychain Access 里找到证书 → 右键 → 导出 → 选择 `.p12` 格式 → 设一个密码
-4. 把 .p12 文件转成 base64：
+## 日常发版
 
 ```bash
-base64 -i ~/Downloads/voicebee_cert.p12 | pbcopy
-# 内容已复制到剪贴板
+# 0. bump 版本号(唯一 source of truth 是 Info.plist,project.yml 里没有版本键)
+#    - CFBundleShortVersionString: X.Y.Z
+#    - CFBundleVersion: 严格递增的整数(Sparkle 靠它判定升级)
+open VoiceJar/Info.plist
+
+# 1. 跑发版脚本
+./scripts/release.sh X.Y.Z
 ```
 
-### 2.2 添加 secrets
+脚本会依次:xcodegen + Release build → **版本号校验**(构建产物的
+CFBundleShortVersionString 必须等于脚本参数,否则 abort;并对比线上 appcast 检查
+CFBundleVersion 递增,warning 级)→ 打 DMG → 公证(仅当 `voicebee-notary` profile
+已配置,当前未配置则跳过)→ Sparkle 签名 → 生成 latest 字节副本 → 打印可直接粘贴的
+appcast `<item>` 片段和后续手工步骤。
 
-| Name | Value |
-|---|---|
-| `APPLE_CERT_P12_BASE64` | 上一步 base64 内容 |
-| `APPLE_CERT_PASSWORD` | 你设的 .p12 密码 |
-| `APPLE_TEAM_ID` | 10 字符 Team ID（在 [Apple Developer Account](https://developer.apple.com/account#MembershipDetailsCard) 看到）|
+```bash
+# 2. 按脚本尾部输出执行三步:
+#    a. VoiceBee-Releases: appcast.xml 的 <channel> 顶部前置新 <item>,commit + push
+#    b. 主仓库: commit 版本 bump + 打 tag
+#    c. VoiceBee-Releases 的 GitHub Releases: 建 vX.Y.Z,上传两个 DMG
+```
+
+发布后验证:
+
+```bash
+# 线上 appcast 生效(raw CDN 缓存 ≤5 分钟)
+curl -s https://raw.githubusercontent.com/answer2023/VoiceBee-Releases/main/appcast.xml | head -30
+```
 
 ---
 
-## 三、Notarytool 公证账号（必须）
+## Sparkle 密钥纪律
 
-Apple 公证服务需要 App-Specific Password（不是你的 Apple ID 密码）。
-
-1. 到 [appleid.apple.com](https://appleid.apple.com/account/manage) → Sign-In and Security → App-Specific Passwords → 生成一个，命名比如 `voicebee-ci`
-2. 添加 secrets：
-
-| Name | Value |
-|---|---|
-| `APPLE_ID` | 你的 Apple Developer 账号邮箱 |
-| `APPLE_APP_PASSWORD` | 上一步生成的 App-Specific Password（形如 `xxxx-xxxx-xxxx-xxxx`）|
-
-注意：`APPLE_TEAM_ID` 在 §2.2 已经加过，公证步骤复用同一个 secret。
+- **私钥只存在于本机 macOS Keychain**(service `https://sparkle-project.org`),
+  `sign_update` 自动读取。**不要**导出到文件、GitHub Secrets 或任何其他位置。
+- **`SUPublicEDKey` 永远不能换**:换了所有旧版用户拒收新签名,自动更新链路永久断。
+- 私钥泄漏 = 攻击者可签发恶意更新静默推给全部用户;怀疑泄漏立即重新生成密钥对
+  并紧急通知用户手动更新(公钥变更意味着自动更新断链,只能走手动)。
 
 ---
 
-## 四、首次发版（v1.2.0）
+## 公证(当前未启用)
 
-配置完上述 4 个 secret 后，第一次发版：
+现状:DMG 未签 Developer ID、未公证。影响仅限**新用户浏览器下载后首次双击安装**
+被 Gatekeeper 拦(需右键→打开);Sparkle 自动更新走独立的 EdDSA 验签,不受影响。
 
-```bash
-# 1. 确认 Info.plist 版本号已 bump（v1.2.0 已经 bump 到 1.2.0 + build 7）
-grep -A1 CFBundleShortVersionString VoiceJar/Info.plist
+启用公证的前置清单(一次性,配齐后 release.sh 第 4 步自动生效):
 
-# 2. 推 tag 触发 workflow
-git tag v1.2.0
-git push origin v1.2.0
-```
+1. Apple Developer 账号 + **Developer ID Application** 证书(装入本机 Keychain)
+2. [appleid.apple.com](https://appleid.apple.com/account/manage) 生成 App-Specific Password,然后:
+   ```bash
+   xcrun notarytool store-credentials voicebee-notary \
+     --apple-id "你的@apple.id" --team-id "TEAM_ID" --password "app-specific-password"
+   ```
+3. `project.yml` 把 `ENABLE_HARDENED_RUNTIME` 改为 `true`(公证硬性要求;
+   entitlements 已备好 `audio-input` + `network.client`,理论兼容,改后需真机回归
+   麦克风 / CGEventTap / Sparkle 三条链路)
+4. xcodebuild 需带 Developer ID 签名身份(不再是 ad-hoc)
 
-到 GitHub Actions 页看进度。约 10-15 分钟后会出现 v1.2.0 release，包含：
-- `VoiceBee-1.2.0.dmg`（已签名 + 公证 + Sparkle 签名）
-- `appcast.xml`
-
-旧版用户的「检查更新」按钮就能拉到这个版本了。
-
----
-
-## 五、本机手工发版（应急）
-
-如果 GitHub Actions 出问题或你想本机控制流程：
-
-```bash
-# 配置 notarytool keychain profile（一次性）
-xcrun notarytool store-credentials voicebee-notary \
-  --apple-id "你的@apple.id" \
-  --team-id "TEAM_ID_10字符" \
-  --password "App-Specific-Password"
-
-# 跑发版脚本
-./scripts/release.sh 1.2.0
-```
-
-脚本会输出 appcast 的 `<item>` XML 片段供你手工填到 `appcast.xml` 里。
+附带收益:Developer ID 固定证书签名后,覆盖安装不再丢 Accessibility 权限
+(TCC 按签名而非 inode 识别 app,见 CLAUDE.md「重装后 Accessibility 权限」节)。
 
 ---
 
@@ -123,8 +94,9 @@ xcrun notarytool store-credentials voicebee-notary \
 
 | 现象 | 可能原因 |
 |---|---|
-| Workflow 在 "Notarize" 步骤超时 | App-Specific Password 失效 / Team ID 错 |
-| 用户更新时报 "Update has invalid signature" | `SUPublicEDKey` 与 CI 用的私钥不匹配；检查 Info.plist 公钥 vs `SPARKLE_ED_PRIVATE_KEY` 来自同一个 keypair |
-| 用户首次安装报 "无法验证开发者" | 没有公证或公证失败；检查 Notarize 日志 |
-| 老用户检查更新拉到的还是旧版 | appcast.xml 没上传；检查 release assets 里有 appcast.xml |
-| 跑 `gh release create` 提示 release 已存在 | tag 已存在历史 release；先 `gh release delete v<version>` 或换版本号 |
+| release.sh 报"版本号不一致" | 忘 bump Info.plist;脚本读的是构建产物里的版本 |
+| release.sh 警告 build 号未递增 | CFBundleVersion 没加;Sparkle 客户端将不提示更新 |
+| 用户更新时报 "Update has invalid signature" | appcast 里的 edSignature/length 与 DMG 不匹配;必须用 sign_update 输出原文 |
+| 用户首次安装报"无法验证开发者" | 未公证(当前已知状态);右键→打开绕过 |
+| 老用户检查更新拉到旧版 | appcast.xml 没 push 到 VoiceBee-Releases,或 raw CDN 缓存未过期(≤5 分钟) |
+| 找不到 sign_update | 先在 Xcode 里 build 一次让 SPM 解析 Sparkle 包 |
