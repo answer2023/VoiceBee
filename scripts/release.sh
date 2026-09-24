@@ -117,23 +117,22 @@ cat <<EOF
                 <enclosure
                     url="https://github.com/answer2023/VoiceBee-Releases/releases/download/v${VERSION}/${APP_NAME}-${VERSION}.dmg"
                     ${SIGNATURE_LINE}
-                    length="${SIZE}"
                     type="application/octet-stream" />
             </item>
 
-双仓库发版步骤（手工）：
-1. 在 VoiceBee-Releases 更新 appcast.xml（Sparkle 用）：
+双仓库发版步骤（手工，按顺序 — 先建 Release 再推 appcast，否则客户端可能先收到更新提示、DMG 却 404）：
+1. 在 VoiceBee-Releases 仓库的 GitHub Releases 创建 v${VERSION}，附两个 DMG asset：
+     - $DMG          ← 版本化 DMG，Sparkle appcast 的 enclosure 引用此 URL
+     - $DMG_LATEST   ← Latest 直链 DMG，网站下载按钮 (jotbee.app/voicebee.html) 引用此 URL
+
+2. 在 VoiceBee-Releases 更新 appcast.xml（Sparkle 用）：
      cd ~/Developer/VoiceBee-Releases
-     # 把上面 <item> 填进 appcast.xml 的 <channel> 顶部
+     # 把上面 <item> 填进 appcast.xml 的 <channel> 顶部，xmllint --noout appcast.xml 校验
      git add appcast.xml && git commit -m "v${VERSION} release" && git push origin main
 
-2. 在 VoiceBee 主仓库 commit + 打 tag：
+3. 在 VoiceBee 主仓库 commit + 打 tag：
      cd ~/Developer/VoiceBee
      git add VoiceJar/Info.plist VoiceJar.xcodeproj
      git commit -m "release: v${VERSION}"
      git tag v${VERSION} && git push origin master --tags
-
-3. 在 VoiceBee-Releases 仓库的 GitHub Releases 创建 v${VERSION}，附两个 DMG asset：
-     - $DMG          ← 版本化 DMG，Sparkle appcast 的 enclosure 引用此 URL
-     - $DMG_LATEST   ← Latest 直链 DMG，网站下载按钮 (jotbee.app/voicebee.html) 引用此 URL
 EOF
