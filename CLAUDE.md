@@ -106,13 +106,7 @@ $SIGN "$DMG"
 # - enclosure url=https://github.com/answer2023/VoiceBee-Releases/releases/download/vX.Y.Z/VoiceBee-X.Y.Z.dmg
 # - sparkle:edSignature + length 用 step 4 输出粘贴
 
-# === 6. push appcast.xml 到公开仓库 ===
-cd ~/Developer/VoiceBee-Releases
-git add appcast.xml  # 只这一个,DMG 在 gitignore
-git commit -m "vX.Y.Z release"
-git push origin main
-
-# === 7. GitHub 网页:VoiceBee-Releases → Releases ===
+# === 6. GitHub 网页:VoiceBee-Releases → Releases(必须先于 appcast push,见踩坑表)===
 # - Draft a new release
 # - Tag: vX.Y.Z (Create new tag on publish)
 # - Target: main
@@ -123,6 +117,13 @@ git push origin main
 #     - dist/VoiceBee.dmg         ← 网站下载按钮 latest 直链(jotbee.app/voicebee.html)
 # - Publish
 # - 或用 gh CLI 一次上传:gh release create vX.Y.Z dist/VoiceBee-X.Y.Z.dmg dist/VoiceBee.dmg --title "VoiceBee X.Y.Z" --notes "..."
+
+# === 7. push appcast.xml 到公开仓库(Release 已上线后)===
+cd ~/Developer/VoiceBee-Releases
+xmllint --noout appcast.xml  # 必须通过
+git add appcast.xml  # 只这一个,DMG 在 gitignore
+git commit -m "vX.Y.Z release"
+git push origin main
 
 # === 8. 在 VoiceBee 主仓库 commit 版本 bump ===
 cd ~/Developer/VoiceBee
@@ -136,10 +137,9 @@ git tag vX.Y.Z && git push --tags  # 主仓库也打 tag,方便回溯
 
 ## arch 现状
 
-- 当前 build **arm64-only**(`lipo -info` 输出 `Non-fat file`)
-- project.yml 没设 `ARCHS`,xcodebuild 默认 `ARCHS_STANDARD` → 在 Apple Silicon 主机 + Xcode 26 上只编 arm64
-- README 已写明 "Apple Silicon required"
-- 想要 universal binary:project.yml 的 `targets.VoiceJar.settings.base` 加 `ARCHS: "arm64 x86_64"` + `ONLY_ACTIVE_ARCH: NO`(follow-up)
+- **发版 DMG 是 universal binary**(`x86_64 arm64`)— 2026-09-24 实测 v1.3.0 线上 DMG 与 v1.3.1 构建产物 `lipo -info` 均为 fat file
+- 原因:project.yml 没设 `ARCHS`,`release.sh` 走 Release 配置(`ONLY_ACTIVE_ARCH` 默认 NO)→ `ARCHS_STANDARD` 编出双架构;日常 Debug 构建仍只编本机 arm64
+- **Intel 上从未实测**(含 WhisperKit 在 x86_64 的运行)— README 只陈述"universal、仅在 Apple Silicon 上测试",不宣称支持 Intel;要正式支持需先找 Intel Mac 回归
 
 ---
 
@@ -164,6 +164,8 @@ git tag vX.Y.Z && git push --tags  # 主仓库也打 tag,方便回溯
 | appcast.xml `length` 不准 | Sparkle 验签失败,客户端"更新失败" | 用 `sign_update` 输出的 length(它就是真实 DMG 字节数) |
 | 换了 EdDSA key | 旧版用户拒收新签名,自动更新永久断 | **永远不要换 SUPublicEDKey**;私钥丢了的应急见 Sparkle 文档 |
 | pushed appcast 后 5 分钟内客户端没看到 | raw CDN 缓存 | 等,或客户端"立即检查更新"会绕过(Sparkle 加 cache-buster 参数) |
+| release.sh 模板 `length` 重复(2026-09-24 修) | `sign_update` 输出已含 `length=`,模板又写一次 → xmllint 报 `Attribute length redefined`,appcast 非法 XML(05-04 曾被误判"误报"删掉 backlog) | 模板删掉多余 `length=` 行;粘贴后一律 `xmllint --noout appcast.xml` |
+| 先 push appcast 后建 Release | 客户端收到更新提示,DMG 下载 404 | 先 `gh release create` 上传 DMG,再 push appcast |
 | release.yml 自动发版(双仓库改造前遗留) | release 建在 private 仓库重演 404;macos-14 装不上 Xcode 16.3;要求 Sparkle 私钥进 GitHub Secrets | 2026-07-04 整个删除,发版走 release.sh;若重建自动化以 docs/RELEASE.md 双仓库模型为准 |
 
 ### git proxy 死端口(`HTTPS_PROXY=` 也覆盖不掉)
@@ -281,7 +283,7 @@ find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*sparkle*Spa
 **已知代价**:
 - 模型下载 150 MB(tiny)— 1.5 GB(large-v3)
 - 推理延迟略高(可接受,VoiceBee 本来就有 polish 阶段几百 ms 延迟)
-- Apple Silicon only(VoiceBee 已 arm64-only,不影响)
+- Apple Silicon only(VoiceBee 发版虽是 universal,但 Intel 未测;WhisperKit 在 Intel 上的可用性待验证)
 - 首次启动需下载模型(增加 onboarding 步骤)
 
 **实施分支**:~~`feature/whisperkit-asr`~~ 已并入 `feature/customizable-hotkey` 谱系(phase2 系列 commit:PoC → ASRProvider 协议 → 引擎切换 UI → 删旧 SpeechRecognizer)

@@ -71,7 +71,7 @@ You can also point it at Claude / DeepSeek / Gemini / OpenAI-compatible endpoint
 
 Download the latest `.dmg` from [VoiceBee-Releases](https://github.com/answer2023/VoiceBee-Releases/releases) and drag to `/Applications`.
 
-**Apple Silicon required** (the build is arm64-only). The DMG is not notarized yet, so on first open Gatekeeper may block it — right-click the app → Open once to bypass.
+The DMG is a **universal binary** (Apple Silicon + Intel), but it is only tested on Apple Silicon. The DMG is not notarized yet, so on first open Gatekeeper may block it — right-click the app → Open once to bypass.
 
 On first launch, grant the permissions VoiceBee asks for:
 1. **Microphone** — for recording.

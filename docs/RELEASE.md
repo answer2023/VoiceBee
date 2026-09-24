@@ -42,10 +42,10 @@ CFBundleVersion 递增,warning 级)→ 打 DMG → 公证(仅当 `voicebee-notar
 appcast `<item>` 片段和后续手工步骤。
 
 ```bash
-# 2. 按脚本尾部输出执行三步:
-#    a. VoiceBee-Releases: appcast.xml 的 <channel> 顶部前置新 <item>,commit + push
-#    b. 主仓库: commit 版本 bump + 打 tag
-#    c. VoiceBee-Releases 的 GitHub Releases: 建 vX.Y.Z,上传两个 DMG
+# 2. 按脚本尾部输出执行三步(顺序不可换 — 先 Release 后 appcast,避免更新提示先到、DMG 404):
+#    a. VoiceBee-Releases 的 GitHub Releases: 建 vX.Y.Z,上传两个 DMG
+#    b. VoiceBee-Releases: appcast.xml 的 <channel> 顶部前置新 <item>,xmllint 校验,commit + push
+#    c. 主仓库: commit 版本 bump + 打 tag
 ```
 
 发布后验证:
