@@ -7,9 +7,69 @@ struct OnboardingView: View {
     @State private var microphoneGranted = false
     @State private var speechGranted = false
     @State private var checkTimer: Timer?
+    @State private var showingPrivacy = true
     var onComplete: () -> Void
 
     var body: some View {
+        if showingPrivacy {
+            privacyPage
+        } else {
+            permissionsPage
+        }
+    }
+
+    /// 第一屏:隐私告知(仅告知,不记录同意)
+    private var privacyPage: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 12) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.tint)
+                    .padding(.top, 24)
+
+                Text("隐私说明")
+                    .font(.system(size: 22, weight: .bold))
+
+                Text("开始前，请了解你的数据去向")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 16)
+
+            ScrollView {
+                PrivacySummaryList()
+                    .padding(.horizontal, 24)
+            }
+
+            VStack(spacing: 10) {
+                Button {
+                    showingPrivacy = false
+                } label: {
+                    Text("我已了解，下一步")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button {
+                    NSWorkspace.shared.open(PrivacyPolicy.url)
+                } label: {
+                    Text("查看完整隐私政策")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .frame(width: 380, height: 480)
+    }
+
+    /// 第二屏:权限授权
+    private var permissionsPage: some View {
         VStack(spacing: 0) {
             // 顶部图标和标题
             VStack(spacing: 12) {

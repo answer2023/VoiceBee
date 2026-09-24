@@ -27,6 +27,7 @@
 		76601336EE5A3A19DA5F1D8E /* PolishStreamParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCAECCBAB2D090E69BF4FD5 /* PolishStreamParserTests.swift */; };
 		785011F0552D949D7017BD87 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 36D51B3E1A5C8B387942CAAC /* Assets.xcassets */; };
 		80BB8D58BA114CD68F2B59B9 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4058165AE4AF5C7BECBF8FFC /* WhisperKit */; };
+		852A1C2108F10839DF2AE43F /* PrivacyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E220C9D0E598A6562CD81CE4 /* PrivacyView.swift */; };
 		8C8EAA22927940FA8717899D /* VoiceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979833D372BF04538435722C /* VoiceEngine.swift */; };
 		979D58F1B5B303423504D076 /* Hotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC1C1041353D74BB7BC625D /* Hotkey.swift */; };
 		9916F9C9349AB52004816D70 /* HomeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B82EAAF805EC74E25D62A1C /* HomeSettingsView.swift */; };
@@ -100,6 +101,7 @@
 		D686914509979FCA97858EBE /* HotkeyRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyRecorderView.swift; sourceTree = "<group>"; };
 		D8E9576E0681B1934291A92A /* PolishService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolishService.swift; sourceTree = "<group>"; };
 		E1F9A821313116017E4A3911 /* WhisperKitProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitProvider.swift; sourceTree = "<group>"; };
+		E220C9D0E598A6562CD81CE4 /* PrivacyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -171,6 +173,7 @@
 				53835F397390E0D6B9A8B771 /* MenuBarView.swift */,
 				6C4A9D49138AD6947FD5400F /* OnboardingView.swift */,
 				7523F1DB058A806D58B4E6F6 /* OverlayWindow.swift */,
+				E220C9D0E598A6562CD81CE4 /* PrivacyView.swift */,
 				42A6CBDC9154F0C282A50EA5 /* SettingsView.swift */,
 				AD021072B3FA1528DF925802 /* StyleSettingsView.swift */,
 				05DF945895AFC0B84E9A6772 /* VocabSettingsView.swift */,
@@ -333,6 +336,7 @@
 				67605A5216488751028EB410 /* OverlayWindow.swift in Sources */,
 				C199B8052239AF11B5CEE4DB /* PolishService.swift in Sources */,
 				E3AE512C0F5D019C748CA847 /* PolishSettings.swift in Sources */,
+				852A1C2108F10839DF2AE43F /* PrivacyView.swift in Sources */,
 				E6234491A548F2D8CAAC3F0D /* SFSpeechProvider.swift in Sources */,
 				21DBB26955C9CA4896583AAF /* SettingsView.swift in Sources */,
 				29C54E25CB41C1E7CDAEA340 /* Stats.swift in Sources */,

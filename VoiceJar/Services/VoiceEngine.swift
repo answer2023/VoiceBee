@@ -21,6 +21,10 @@ class VoiceEngine {
     private var polishTask: Task<Void, Never>?
     private var translateTask: Task<Void, Never>?
     private var prepareTask: Task<Void, Never>?
+    private var pendingStopTask: Task<Void, Never>?
+
+    /// 松开快捷键后继续收音的时长 — 用户常在最后一个字说完前就松手,立即关麦会截掉尾音
+    private static let releaseTailDelay: Duration = .milliseconds(300)
 
     private func log(_ msg: String) {
         VJLog.log(msg, prefix: "Engine")
@@ -123,12 +127,21 @@ class VoiceEngine {
     private func setupHotkey() {
         hotkeyManager.onRecordStart = { [weak self] in
             Task { @MainActor in
-                self?.startRecording()
+                guard let self else { return }
+                // 收尾窗口内再次按下 → 取消待执行的停止,接着录同一段(否则 startRecording
+                // 撞 isRecording guard 被忽略,随后延迟停止触发,第二段话整段丢失)
+                if let pending = self.pendingStopTask {
+                    pending.cancel()
+                    self.pendingStopTask = nil
+                    self.log("↩️ 收尾窗口内重新按下,继续录音")
+                    return
+                }
+                self.startRecording()
             }
         }
         hotkeyManager.onRecordStop = { [weak self] in
             Task { @MainActor in
-                self?.stopRecordingAndProcess()
+                self?.scheduleStopAfterTail()
             }
         }
         // F3=B: Toggle 模式 30 分钟硬超时反馈
@@ -389,6 +402,17 @@ class VoiceEngine {
         }
     }
 
+    /// 松开快捷键后延迟 releaseTailDelay 再停止,期间麦克风继续收音、partial 继续更新
+    private func scheduleStopAfterTail() {
+        guard appState.isRecording, pendingStopTask == nil else { return }
+        pendingStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.releaseTailDelay)
+            guard let self, !Task.isCancelled else { return }
+            self.pendingStopTask = nil
+            self.stopRecordingAndProcess()
+        }
+    }
+
     func stopRecordingAndProcess() {
         guard appState.isRecording else { return }
 
@@ -646,6 +670,10 @@ class VoiceEngine {
             return
         }
         log("🛑 Esc 取消全链路")
+
+        // 0. 收尾窗口内取消 → 丢弃待执行的延迟停止,防止取消后又走一遍 polish/注入
+        pendingStopTask?.cancel()
+        pendingStopTask = nil
 
         // 1. 录音 + ASR — provider 内部处理 60s rotation + mic 停起,VoiceEngine 不感知
         asrProvider.cancel()

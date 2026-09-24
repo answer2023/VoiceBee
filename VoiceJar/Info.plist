@@ -19,9 +19,9 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>VoiceBee 需要访问麦克风来进行语音识别</string>
+	<string>VoiceBee 需要访问麦克风录制你的语音并转为文字。使用 Apple 语音识别引擎时，音频可能由 Apple 服务器处理；WhisperKit 引擎则完全在本机识别。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>VoiceBee 使用语音识别将您的语音转为文字</string>
+	<string>VoiceBee 使用 Apple 语音识别将你的语音转为文字，音频可能被发送到 Apple 服务器处理。如需完全本地识别，可在设置中切换到 WhisperKit 引擎。</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

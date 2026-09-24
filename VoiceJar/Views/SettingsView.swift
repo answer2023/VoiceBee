@@ -14,6 +14,7 @@ struct SettingsView: View {
         case translate = "翻译"
         case ai = "AI 润色"
         case vocab = "词典"
+        case privacy = "隐私"
         case about = "关于"
 
         var icon: String {
@@ -24,6 +25,7 @@ struct SettingsView: View {
             case .translate: return "globe"
             case .ai: return "sparkles"
             case .vocab: return "character.book.closed"
+            case .privacy: return "lock.shield"
             case .about: return "info.circle"
             }
         }
@@ -51,6 +53,8 @@ struct SettingsView: View {
                 AISettingsView(appState: appState)
             case .vocab:
                 VocabSettingsView(appState: appState)
+            case .privacy:
+                PrivacySettingsView()
             case .about:
                 AboutSettingsView()
             }
