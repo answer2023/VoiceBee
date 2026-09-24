@@ -65,7 +65,7 @@ struct OnboardingView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
-        .frame(width: 380, height: 480)
+        .frame(width: 380, height: 580)
     }
 
     /// 第二屏:权限授权
@@ -185,7 +185,7 @@ struct OnboardingView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .frame(width: 380, height: 480)
+        .frame(width: 380, height: 580)
         .onAppear {
             startPolling()
             checkPermissions()
